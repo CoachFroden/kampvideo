@@ -1,5 +1,4 @@
 import { adminDb } from "@/lib/firebase-admin";
-import { signedVideoUrl } from "@/lib/r2";
 import { authError, requireUser } from "@/lib/server-auth";
 
 export async function POST(request: Request) {
@@ -10,12 +9,12 @@ export async function POST(request: Request) {
     const snap = await adminDb().collection("matches").doc(matchId).get();
     if (!snap.exists) return Response.json({ error: "Kampen finnes ikke" }, { status: 404 });
     const match = snap.data()!;
-    let key = match.videoKey;
+    if (typeof match.videoKey !== "string") return Response.json({ error: "Video mangler" }, { status: 404 });
     if (clipId) {
       const clip = Array.isArray(match.clips) ? match.clips.find((item: { id?: string }) => item.id === clipId) : null;
       if (!clip) return Response.json({ error: "Klippet finnes ikke" }, { status: 404 });
-      key = clip.videoKey ?? match.videoKey;
     }
-    return Response.json({ url: await signedVideoUrl(key), expiresIn: 60 }, { headers: { "Cache-Control": "private, no-store" } });
+    const query = new URLSearchParams({ matchId });
+    return Response.json({ url: `/api/stream?${query}`, sessionBound: true }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) { return authError(error); }
 }

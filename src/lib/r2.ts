@@ -1,7 +1,6 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-function client() {
+export function r2Client() {
   const accountId = process.env.R2_ACCOUNT_ID;
   if (!accountId) throw new Error("R2 er ikke konfigurert");
   return new S3Client({
@@ -14,11 +13,11 @@ function client() {
   });
 }
 
-export async function signedVideoUrl(key: string) {
+export function videoCommand(key: string, range?: string | null) {
   if (!key || key.includes("..") || key.startsWith("/")) throw new Error("Ugyldig videonøkkel");
-  return getSignedUrl(client(), new GetObjectCommand({
+  return new GetObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
     Key: key,
-    ResponseContentDisposition: "inline",
-  }), { expiresIn: 60 });
+    Range: range || undefined,
+  });
 }

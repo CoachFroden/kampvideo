@@ -28,6 +28,8 @@ export default function Home() {
     setUser(current); setVideoUrl("");
     if (!current) { setLoading(false); setApproved(false); return; }
     try {
+      const idToken = await current.getIdToken();
+      await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken }) });
       const me = await api(current, "/api/me");
       const profile = await me.json();
       setApproved(profile.approved === true);
@@ -56,15 +58,20 @@ export default function Home() {
     setVideoUrl(`${data.url}${clip?.start ? `#t=${clip.start}${clip.end ? `,${clip.end}` : ""}` : ""}`);
   }
 
+  async function logout() {
+    await fetch("/api/session", { method: "DELETE" });
+    await signOut(auth);
+  }
+
   if (loading) return <main className="center"><div className="loader"/><span>Sikrer kamprommet …</span></main>;
   if (!user) return <Login email={email} password={password} error={error} setEmail={setEmail} setPassword={setPassword} onEmail={emailLogin} onGoogle={() => signInWithPopup(auth, new GoogleAuthProvider())}/>;
-  if (!approved) return <Pending user={user} logout={() => signOut(auth)}/>;
+  if (!approved) return <Pending user={user} logout={logout}/>;
 
   const allClips = matches.reduce((sum, match) => sum + (match.clips?.length ?? 0), 0);
   return <main className="app-shell">
     <header className="topbar">
       <a className="brand" href="#"><span className="brand-mark"><Goal/></span><span><b>SAMNANGER</b><small>KAMPROM</small></span></a>
-      <div className="top-actions"><span className="secure"><ShieldCheck/> Sikker tilgang</span><button className="avatar" onClick={() => signOut(auth)} title="Logg ut">{user.displayName?.[0] ?? user.email?.[0]?.toUpperCase() ?? "S"}<LogOut/></button></div>
+      <div className="top-actions"><span className="secure"><ShieldCheck/> Sikker tilgang</span><button className="avatar" onClick={logout} title="Logg ut">{user.displayName?.[0] ?? user.email?.[0]?.toUpperCase() ?? "S"}<LogOut/></button></div>
     </header>
 
     <section className="hero">
