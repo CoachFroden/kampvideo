@@ -26,6 +26,12 @@ export async function requireUser(request: Request, requireApproved = true) {
   };
 }
 
+export async function requireAdmin(request: Request) {
+  const user = await requireUser(request);
+  if (user.role !== "admin") throw new Error("ADMIN_REQUIRED");
+  return user;
+}
+
 export async function requireSession(request: Request, requireApproved = true) {
   const cookie = request.headers.get("cookie")?.match(/(?:^|;\s*)kampvideo_session=([^;]+)/)?.[1];
   if (!cookie) throw new Error("UNAUTHENTICATED");
@@ -38,6 +44,10 @@ export async function requireSession(request: Request, requireApproved = true) {
 
 export function authError(error: unknown) {
   const message = error instanceof Error ? error.message : "UNKNOWN";
-  const status = message === "UNAUTHENTICATED" ? 401 : message === "PENDING_APPROVAL" ? 403 : 500;
+  const status = message === "UNAUTHENTICATED"
+    ? 401
+    : message === "PENDING_APPROVAL" || message === "ADMIN_REQUIRED"
+      ? 403
+      : 500;
   return Response.json({ error: message }, { status });
 }

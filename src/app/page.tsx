@@ -17,6 +17,7 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [approved, setApproved] = useState(false);
+  const [role, setRole] = useState("viewer");
   const [matches, setMatches] = useState<Match[]>([]);
   const [selected, setSelected] = useState<Match | null>(null);
   const [videoUrl, setVideoUrl] = useState("");
@@ -33,6 +34,7 @@ export default function Home() {
       const me = await api(current, "/api/me");
       const profile = await me.json();
       setApproved(profile.approved === true);
+      setRole(typeof profile.role === "string" ? profile.role : "viewer");
       if (profile.approved) {
         const response = await api(current, "/api/matches");
         const data = await response.json();
@@ -71,7 +73,7 @@ export default function Home() {
   return <main className="app-shell">
     <header className="topbar">
       <a className="brand" href="#"><span className="brand-mark"><Goal/></span><span><b>SAMNANGER</b><small>KAMPROM</small></span></a>
-      <div className="top-actions"><span className="secure"><ShieldCheck/> Sikker tilgang</span><button className="avatar" onClick={logout} title="Logg ut">{user.displayName?.[0] ?? user.email?.[0]?.toUpperCase() ?? "S"}<LogOut/></button></div>
+      <div className="top-actions"><span className="secure"><ShieldCheck/> Sikker tilgang</span>{role === "admin" && <a className="ghost" style={{textDecoration:"none"}} href="/admin">Administrasjon</a>}<button className="avatar" onClick={logout} title="Logg ut">{user.displayName?.[0] ?? user.email?.[0]?.toUpperCase() ?? "S"}<LogOut/></button></div>
     </header>
 
     <section className="hero">

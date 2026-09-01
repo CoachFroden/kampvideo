@@ -38,6 +38,16 @@ Opprett dokumenter i `matches` med feltene:
 
 Dato kan senere flyttes til Firestore Timestamp når administrasjonssiden bygges.
 
+## Administrasjon
+
+Godkjente brukere med `role: "admin"` kan åpne `/admin`. Der kan administratoren:
+
+- registrere en ny kamp og koble den til en privat videofil via R2-nøkkelen
+- legge inn klipp med start- og sluttid i kampen
+- godkjenne nye brukere som står og venter på tilgang
+
+Alle administratoroperasjoner kontrolleres på serveren. Nettleseren får ikke direkte tilgang til Firestore eller R2-hemmeligheter.
+
 ## Første administrator
 
 Logg inn én gang. Firebase oppretter da et dokument i `users`. Sett `approved` til `true` og `role` til `admin` direkte i Firebase Console. Dette er bevisst manuelt for første konto, slik at ingen kan gjøre seg selv til administrator.
