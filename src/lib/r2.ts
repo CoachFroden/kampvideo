@@ -20,5 +20,5 @@ export async function signedVideoUrl(key: string) {
     Bucket: process.env.R2_BUCKET_NAME,
     Key: key,
     ResponseContentDisposition: "inline",
-  }), { expiresIn: 300 });
+  }), { expiresIn: 60 });
 }

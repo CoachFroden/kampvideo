@@ -4,7 +4,7 @@ Lukket kamp- og videoportal for Samnanger. Appen bruker Firebase Authentication,
 
 ## Sikkerhetsmodell
 
-- R2-objekter er private og eksponeres kun med signerte URL-er som varer i fem minutter.
+- R2-objekter er private og eksponeres kun med signerte URL-er som varer i 60 sekunder.
 - Firebase ID-token verifiseres på serveren før hver forespørsel.
 - Brukeren må i tillegg ha `approved: true` i `users/{uid}` i Firestore.
 - Nettleseren har ingen direkte Firestore-tilgang.

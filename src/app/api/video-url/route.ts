@@ -16,6 +16,6 @@ export async function POST(request: Request) {
       if (!clip) return Response.json({ error: "Klippet finnes ikke" }, { status: 404 });
       key = clip.videoKey ?? match.videoKey;
     }
-    return Response.json({ url: await signedVideoUrl(key), expiresIn: 300 }, { headers: { "Cache-Control": "private, no-store" } });
+    return Response.json({ url: await signedVideoUrl(key), expiresIn: 60 }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) { return authError(error); }
 }
