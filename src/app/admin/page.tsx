@@ -1,330 +1,167 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { User, onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/lib/firebase-client";
-import "./admin.css";
-import {
-  ArrowLeft,
-  Check,
-  CirclePlay,
-  Clock3,
-  Film,
-  Goal,
-  LockKeyhole,
-  Plus,
-  ShieldCheck,
-  UserCheck,
-  Users,
-} from "lucide-react";
+import { ArrowLeft, CalendarDays, Check, CircleUserRound, Clock3, Film, FolderOpen, Goal, LoaderCircle, Plus, RefreshCw, ShieldCheck, Trash2, Users, Video } from "lucide-react";
 
-type Clip = {
-  id: string;
-  title: string;
-  category?: string;
-  minute?: string;
-  start?: number;
-  end?: number;
-};
+type Clip = { id: string; title: string; category: string; start: number; end: number; minute: string };
+type Match = { id: string; opponent: string; date: string; venue?: string; competition?: string; homeScore: number; awayScore: number; isHome?: boolean; videoKey: string; clips?: Clip[] };
+type ManagedUser = { id: string; email: string; name: string; approved: boolean; role: "viewer" | "admin"; createdAt?: string | null };
+type VideoFile = { key: string; size: number; modified?: string | null };
+type AdminData = { users: ManagedUser[]; matches: Match[]; files: VideoFile[] };
+type Tab = "matches" | "clips" | "users";
 
-type AdminMatch = {
-  id: string;
-  opponent: string;
-  date: string;
-  dateIso?: string;
-  venue?: string;
-  competition?: string;
-  videoKey?: string;
-  clips?: Clip[];
-};
+const emptyData: AdminData = { users: [], matches: [], files: [] };
 
-type AdminUser = {
-  uid: string;
-  email: string;
-  name?: string;
-  approved: boolean;
-  role: string;
-};
-
-type Overview = { matches: AdminMatch[]; users: AdminUser[] };
-
-async function adminApi(user: User, path: string, init?: RequestInit) {
+async function api(user: User, path: string, init?: RequestInit) {
   const token = await user.getIdToken();
-  return fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...init?.headers,
-    },
-  });
-}
-
-function clockToSeconds(value: string) {
-  const parts = value.trim().split(":").map(Number);
-  if (parts.some((part) => !Number.isFinite(part) || part < 0)) return Number.NaN;
-  if (parts.length === 2 && parts[1] < 60) return parts[0] * 60 + parts[1];
-  if (parts.length === 3 && parts[1] < 60 && parts[2] < 60) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  }
-  return Number.NaN;
-}
-
-async function readError(response: Response, fallback: string) {
-  const data = await response.json().catch(() => ({}));
-  return typeof data.error === "string" && !data.error.includes("_") ? data.error : fallback;
+  return fetch(path, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...init?.headers } });
 }
 
 export default function AdminPage() {
   const [user, setUser] = useState<User | null>(null);
-  const [overview, setOverview] = useState<Overview>({ matches: [], users: [] });
+  const [data, setData] = useState<AdminData>(emptyData);
+  const [tab, setTab] = useState<Tab>("matches");
   const [loading, setLoading] = useState(true);
-  const [accessDenied, setAccessDenied] = useState(false);
-  const [busy, setBusy] = useState("");
-  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [clipMatchId, setClipMatchId] = useState("");
+  const [notice, setNotice] = useState("");
 
-  async function load(current: User, quiet = false) {
-    if (!quiet) setLoading(true);
-    const response = await adminApi(current, "/api/admin/overview");
-    if (response.status === 403) {
-      setAccessDenied(true);
-      setLoading(false);
-      return;
-    }
-    if (!response.ok) throw new Error("Kunne ikke hente administrasjonen.");
-    const data = await response.json() as Overview;
-    setOverview(data);
-    setClipMatchId((selected) => selected || data.matches[0]?.id || "");
-    setLoading(false);
-  }
+  const load = useCallback(async (current: User) => {
+    setLoading(true); setError("");
+    try {
+      const response = await api(current, "/api/admin");
+      if (response.status === 403) { window.location.href = "/"; return; }
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Kunne ikke hente administrasjonsdata");
+      setData(payload);
+    } catch (err) { setError(err instanceof Error ? err.message : "Noe gikk galt"); }
+    finally { setLoading(false); }
+  }, []);
 
   useEffect(() => onAuthStateChanged(auth, (current) => {
-    if (!current) {
-      window.location.replace("/");
-      return;
-    }
-    setUser(current);
-    load(current).catch(() => {
-      setError("Kunne ikke åpne administrasjonen. Prøv igjen.");
-      setLoading(false);
-    });
-  }), []);
+    if (!current) { window.location.href = "/"; return; }
+    setUser(current); void load(current);
+  }), [load]);
 
-  const pendingUsers = useMemo(
-    () => overview.users.filter((candidate) => !candidate.approved),
-    [overview.users],
-  );
-  const approvedUsers = overview.users.filter((candidate) => candidate.approved);
-  const clipCount = overview.matches.reduce((sum, match) => sum + (match.clips?.length ?? 0), 0);
-
-  async function createMatch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!user) return;
-    const form = event.currentTarget;
-    const fields = new FormData(form);
-    setBusy("match");
-    setError("");
-    setMessage("");
-
-    const response = await adminApi(user, "/api/admin/matches", {
-      method: "POST",
-      body: JSON.stringify({
-        opponent: fields.get("opponent"),
-        dateIso: fields.get("dateIso"),
-        venue: fields.get("venue"),
-        competition: fields.get("competition"),
-        isHome: fields.get("isHome") === "true",
-        homeScore: fields.get("homeScore"),
-        awayScore: fields.get("awayScore"),
-        videoKey: fields.get("videoKey"),
-      }),
-    });
-
-    if (!response.ok) {
-      setError(await readError(response, "Kampen kunne ikke lagres."));
-      setBusy("");
-      return;
-    }
-
-    const created = await response.json() as { id: string };
-    form.reset();
-    setClipMatchId(created.id);
-    await load(user, true);
-    setMessage("Kampen er lagt til. Du kan legge inn klipp nå.");
-    setBusy("");
+  async function mutate(init: RequestInit, success: string, path = "/api/admin") {
+    if (!user) return false;
+    setSaving(true); setError(""); setNotice("");
+    try {
+      const response = await api(user, path, init);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Kunne ikke lagre");
+      setNotice(success); await load(user); return true;
+    } catch (err) { setError(err instanceof Error ? err.message : "Noe gikk galt"); return false; }
+    finally { setSaving(false); }
   }
 
-  async function createClip(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!user) return;
-    const form = event.currentTarget;
-    const fields = new FormData(form);
-    const startText = String(fields.get("start") ?? "");
-    const endText = String(fields.get("end") ?? "");
-    const start = clockToSeconds(startText);
-    const end = clockToSeconds(endText);
-
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-      setError("Bruk tid som 35:18. Sluttiden må være etter starttiden.");
-      return;
-    }
-
-    setBusy("clip");
-    setError("");
-    setMessage("");
-    const response = await adminApi(user, "/api/admin/clips", {
-      method: "POST",
-      body: JSON.stringify({
-        matchId: fields.get("matchId"),
-        title: fields.get("title"),
-        category: fields.get("category"),
-        minute: startText,
-        start,
-        end,
-      }),
-    });
-
-    if (!response.ok) {
-      setError(await readError(response, "Klippet kunne ikke lagres."));
-      setBusy("");
-      return;
-    }
-
-    form.reset();
-    setClipMatchId(String(fields.get("matchId") ?? ""));
-    await load(user, true);
-    setMessage("Klippet er lagt til i kampen.");
-    setBusy("");
-  }
-
-  async function approveUser(uid: string) {
-    if (!user) return;
-    setBusy(`user:${uid}`);
-    setError("");
-    setMessage("");
-    const response = await adminApi(user, "/api/admin/users", {
-      method: "POST",
-      body: JSON.stringify({ uid }),
-    });
-
-    if (!response.ok) {
-      setError(await readError(response, "Brukeren kunne ikke godkjennes."));
-      setBusy("");
-      return;
-    }
-
-    await load(user, true);
-    setMessage("Brukeren er godkjent og har nå tilgang til kampvideoene.");
-    setBusy("");
-  }
-
-  if (loading) {
-    return <main className="admin-center"><div className="loader"/><span>Kontrollerer administratortilgang …</span></main>;
-  }
-
-  if (accessDenied) {
-    return <main className="admin-center admin-denied">
-      <span className="admin-lock"><LockKeyhole/></span>
-      <p className="eyebrow">KUN ADMINISTRATOR</p>
-      <h1>Ingen tilgang</h1>
-      <p>Denne siden kan bare åpnes av en godkjent bruker med rollen admin.</p>
-      <a className="ghost" href="/"><ArrowLeft/> Tilbake til kampvideo</a>
-    </main>;
-  }
-
+  const waiting = useMemo(() => data.users.filter((item) => !item.approved).length, [data.users]);
   return <main className="admin-shell">
     <header className="admin-topbar">
-      <a className="brand" href="/"><span className="brand-mark"><Goal/></span><span><b>SAMNANGER</b><small>KAMPROM ADMIN</small></span></a>
-      <a className="admin-back" href="/"><ArrowLeft/> Til kampvideo</a>
+      <Link href="/" className="admin-back"><ArrowLeft/> Til kamprommet</Link>
+      <div className="brand"><span className="brand-mark"><Goal/></span><span><b>SAMNANGER</b><small>ADMIN</small></span></div>
+      <span className="secure"><ShieldCheck/> Kun administrator</span>
     </header>
 
     <section className="admin-hero">
-      <div>
-        <span className="eyebrow"><ShieldCheck/> SIKKER ADMINISTRASJON</span>
-        <h1>Kampvideo<br/><em>kontrollrom</em></h1>
-        <p>Legg inn nye kamper, marker klipp og godkjenn brukere på ett sted.</p>
-      </div>
-      <div className="admin-stats" aria-label="Status">
-        <article><Film/><span><b>{overview.matches.length}</b> kamper</span></article>
-        <article><CirclePlay/><span><b>{clipCount}</b> klipp</span></article>
-        <article className={pendingUsers.length ? "needs-action" : ""}><Users/><span><b>{pendingUsers.length}</b> venter</span></article>
+      <div><span className="eyebrow">KONTROLLSENTER</span><h1>Administrer<br/><em>kamprommet</em></h1><p>Kamper, trenerklipp og tilgang samlet på ett sted.</p></div>
+      <div className="admin-summary">
+        <article><Film/><b>{data.matches.length}</b><span>kamper</span></article>
+        <article><Video/><b>{data.matches.reduce((sum, item) => sum + (item.clips?.length ?? 0), 0)}</b><span>klipp</span></article>
+        <article><Users/><b>{waiting}</b><span>venter</span></article>
       </div>
     </section>
 
-    {(message || error) && <div className={`admin-notice ${error ? "error" : "success"}`} role="status">
-      {error ? <LockKeyhole/> : <Check/>}<span>{error || message}</span>
-    </div>}
-
-    <nav className="admin-jump" aria-label="Administrasjon">
-      <a href="#new-match"><Plus/> Ny kamp</a>
-      <a href="#new-clip"><Clock3/> Nytt klipp</a>
-      <a href="#users"><UserCheck/> Brukere {pendingUsers.length > 0 && <b>{pendingUsers.length}</b>}</a>
+    <nav className="admin-tabs" aria-label="Administrasjon">
+      <button className={tab === "matches" ? "active" : ""} onClick={() => setTab("matches")}><CalendarDays/> Kamper</button>
+      <button className={tab === "clips" ? "active" : ""} onClick={() => setTab("clips")}><Clock3/> Klipp</button>
+      <button className={tab === "users" ? "active" : ""} onClick={() => setTab("users")}><CircleUserRound/> Brukere {waiting > 0 && <i>{waiting}</i>}</button>
+      <button className="refresh" onClick={() => user && load(user)} title="Oppdater"><RefreshCw/></button>
     </nav>
 
-    <section className="admin-workspace">
-      <article className="admin-card admin-form-card" id="new-match">
-        <div className="admin-card-heading"><span className="admin-card-icon lime"><Film/></span><div><small>ARKIV</small><h2>Legg til kamp</h2></div></div>
-        <form className="admin-form" onSubmit={createMatch}>
-          <div className="admin-field-grid two">
-            <label>Motstander<input name="opponent" required placeholder="Bønes 2"/></label>
-            <label>Dato<input name="dateIso" type="date" required/></label>
-          </div>
-          <div className="admin-field-grid two">
-            <label>Arena<input name="venue" placeholder="Hagabotnane kunstgress"/></label>
-            <label>Turnering<input name="competition" defaultValue="Seriekamp"/></label>
-          </div>
-          <div className="admin-field-grid score-row">
-            <label>Samnanger<input name="homeScore" type="number" min="0" max="99" inputMode="numeric" placeholder="3"/></label>
-            <span>–</span>
-            <label>Motstander<input name="awayScore" type="number" min="0" max="99" inputMode="numeric" placeholder="1"/></label>
-            <label>Hjemme/borte<select name="isHome" defaultValue="true"><option value="true">Hjemmekamp</option><option value="false">Bortekamp</option></select></label>
-          </div>
-          <label>Videonøkkel i R2<input name="videoKey" required placeholder="kamper/samnanger-bones-2.mp4"/><small>Bruk hele stien og filnavnet slik det står i R2-bøtten.</small></label>
-          <button className="admin-submit" disabled={busy === "match"} type="submit"><Plus/>{busy === "match" ? "Lagrer …" : "Legg til kamp"}</button>
-        </form>
-      </article>
-
-      <aside className="admin-card match-list-card">
-        <div className="admin-card-heading"><span className="admin-card-icon violet"><Goal/></span><div><small>OVERSIKT</small><h2>Kamper i arkivet</h2></div></div>
-        <div className="admin-match-list">
-          {overview.matches.length ? overview.matches.map((match) => <button type="button" key={match.id} onClick={() => setClipMatchId(match.id)}>
-            <span><b>Samnanger – {match.opponent}</b><small>{match.date} · {match.clips?.length ?? 0} klipp</small></span>
-            <Plus/>
-          </button>) : <p className="admin-empty">Ingen kamper er registrert ennå.</p>}
-        </div>
-      </aside>
-
-      <article className="admin-card admin-form-card" id="new-clip">
-        <div className="admin-card-heading"><span className="admin-card-icon blue"><CirclePlay/></span><div><small>ANALYSE</small><h2>Legg til klipp</h2></div></div>
-        <form className="admin-form" onSubmit={createClip}>
-          <label>Kamp<select name="matchId" required value={clipMatchId} onChange={(event) => setClipMatchId(event.target.value)}><option value="" disabled>Velg kamp</option>{overview.matches.map((match) => <option key={match.id} value={match.id}>Samnanger – {match.opponent} ({match.date})</option>)}</select></label>
-          <div className="admin-field-grid two">
-            <label>Tittel<input name="title" required placeholder="Presset før scoringen"/></label>
-            <label>Kategori<select name="category" defaultValue="Analyse"><option>Analyse</option><option>Angrep</option><option>Forsvar</option><option>Overgang</option><option>Dødball</option><option>Mål</option></select></label>
-          </div>
-          <div className="admin-field-grid two">
-            <label>Start<input name="start" required inputMode="numeric" placeholder="35:18"/><small>Minutt:sekund</small></label>
-            <label>Slutt<input name="end" required inputMode="numeric" placeholder="35:31"/><small>Minutt:sekund</small></label>
-          </div>
-          <button className="admin-submit blue-button" disabled={busy === "clip" || !overview.matches.length} type="submit"><CirclePlay/>{busy === "clip" ? "Lagrer …" : "Legg til klipp"}</button>
-        </form>
-      </article>
-
-      <article className="admin-card users-card" id="users">
-        <div className="admin-card-heading"><span className="admin-card-icon orange"><UserCheck/></span><div><small>TILGANG</small><h2>Godkjenn brukere</h2></div></div>
-        <div className="pending-users">
-          {pendingUsers.length ? pendingUsers.map((candidate) => <div className="admin-user" key={candidate.uid}>
-            <span className="user-avatar">{candidate.email[0]?.toUpperCase() || "?"}</span>
-            <span><b>{candidate.name || candidate.email}</b>{candidate.name && <small>{candidate.email}</small>}<em>Venter på tilgang</em></span>
-            <button type="button" disabled={busy === `user:${candidate.uid}`} onClick={() => approveUser(candidate.uid)}><Check/>{busy === `user:${candidate.uid}` ? "Godkjenner …" : "Godkjenn"}</button>
-          </div>) : <div className="all-approved"><ShieldCheck/><div><b>Ingen venter</b><span>Alle registrerte forespørsler er behandlet.</span></div></div>}
-        </div>
-        <details className="approved-users"><summary>{approvedUsers.length} godkjente brukere</summary><div>{approvedUsers.map((candidate) => <p key={candidate.uid}><span>{candidate.email}</span>{candidate.role === "admin" && <b>ADMIN</b>}</p>)}</div></details>
-      </article>
-    </section>
-
-    <footer><LockKeyhole/> Alle endringer kontrolleres på serveren og krever administratorrolle</footer>
+    {error && <div className="admin-alert error">{error}</div>}
+    {notice && <div className="admin-alert success"><Check/> {notice}</div>}
+    {loading ? <div className="admin-loading"><LoaderCircle/> Henter kontrollsenteret …</div> : <>
+      {tab === "matches" && <MatchesPanel data={data} saving={saving} mutate={mutate}/>} 
+      {tab === "clips" && <ClipsPanel matches={data.matches} saving={saving} mutate={mutate}/>} 
+      {tab === "users" && <UsersPanel users={data.users} saving={saving} mutate={mutate}/>} 
+    </>}
   </main>;
 }
+
+function MatchesPanel({ data, saving, mutate }: { data: AdminData; saving: boolean; mutate: (init: RequestInit, success: string, path?: string) => Promise<boolean> }) {
+  const [form, setForm] = useState({ opponent: "", date: "", venue: "Hagabotnane kunstgress", competition: "G14 · Seriekamp", homeScore: "", awayScore: "", isHome: true, videoKey: "" });
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const ok = await mutate({ method: "POST", body: JSON.stringify({ action: "createMatch", match: form }) }, "Kampen ble lagt til");
+    if (ok) setForm((value) => ({ ...value, opponent: "", date: "", homeScore: "", awayScore: "", videoKey: "" }));
+  }
+  return <section className="admin-grid">
+    <form className="admin-card admin-form" onSubmit={submit}>
+      <div className="admin-card-head"><span className="admin-icon lime"><Plus/></span><div><small>NY KAMP</small><h2>Legg til kamp</h2></div></div>
+      <div className="form-grid">
+        <label className="wide">Motstander<input value={form.opponent} onChange={(e) => setForm({ ...form, opponent: e.target.value })} placeholder="Bønes 2" required/></label>
+        <label>Dato<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required/></label>
+        <label>Bane<input value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })}/></label>
+        <label>Kampform<input value={form.competition} onChange={(e) => setForm({ ...form, competition: e.target.value })}/></label>
+        <label className="score-input">Samnanger<input type="number" min="0" max="99" value={form.homeScore} onChange={(e) => setForm({ ...form, homeScore: e.target.value })} required/></label>
+        <label className="score-input">Motstander<input type="number" min="0" max="99" value={form.awayScore} onChange={(e) => setForm({ ...form, awayScore: e.target.value })} required/></label>
+        <label className="wide file-select">Videofil<select value={form.videoKey} onChange={(e) => setForm({ ...form, videoKey: e.target.value })} required><option value="">Velg fil fra R2 …</option>{data.files.map((file) => <option key={file.key} value={file.key}>{file.key} · {formatBytes(file.size)}</option>)}</select><FolderOpen/></label>
+        <label className="toggle wide"><input type="checkbox" checked={form.isHome} onChange={(e) => setForm({ ...form, isHome: e.target.checked })}/><span/> Samnanger er hjemmelag</label>
+      </div>
+      <button className="admin-primary" disabled={saving}>{saving ? <LoaderCircle/> : <Plus/>} Legg til kamp</button>
+    </form>
+    <div className="admin-card list-card">
+      <div className="admin-card-head"><span className="admin-icon violet"><Film/></span><div><small>ARKIV</small><h2>Registrerte kamper</h2></div></div>
+      <div className="admin-list">{data.matches.length === 0 ? <p className="admin-empty">Ingen kamper registrert.</p> : data.matches.map((match) => <article key={match.id} className="match-row"><div className="match-date"><b>{new Date(`${match.date}T12:00:00`).getDate()}</b><span>{new Date(`${match.date}T12:00:00`).toLocaleDateString("nb-NO", { month: "short" })}</span></div><div className="row-main"><small>{match.competition}</small><b>Samnanger {match.homeScore}–{match.awayScore} {match.opponent}</b><span>{match.videoKey}</span></div><button type="button" className="icon-danger" title="Slett kamp" disabled={saving} onClick={() => confirm(`Slette kampen mot ${match.opponent}?`) && mutate({ method: "DELETE" }, "Kampen ble slettet", `/api/admin?matchId=${encodeURIComponent(match.id)}`)}><Trash2/></button></article>)}</div>
+    </div>
+  </section>;
+}
+
+function ClipsPanel({ matches, saving, mutate }: { matches: Match[]; saving: boolean; mutate: (init: RequestInit, success: string, path?: string) => Promise<boolean> }) {
+  const [matchId, setMatchId] = useState(matches[0]?.id ?? "");
+  const [title, setTitle] = useState(""); const [category, setCategory] = useState("Analyse"); const [start, setStart] = useState(""); const [end, setEnd] = useState("");
+  const selected = matches.find((item) => item.id === matchId) ?? matches[0];
+  useEffect(() => { if (!matchId && matches[0]) setMatchId(matches[0].id); }, [matchId, matches]);
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const ok = await mutate({ method: "POST", body: JSON.stringify({ action: "createClip", matchId, clip: { title, category, start: toSeconds(start), end: toSeconds(end) } }) }, "Klippet ble lagt til");
+    if (ok) { setTitle(""); setStart(""); setEnd(""); }
+  }
+  return <section className="admin-grid">
+    <form className="admin-card admin-form" onSubmit={submit}>
+      <div className="admin-card-head"><span className="admin-icon blue"><Clock3/></span><div><small>NYTT KLIPP</small><h2>Marker situasjon</h2></div></div>
+      <div className="form-grid">
+        <label className="wide">Kamp<select value={matchId} onChange={(e) => setMatchId(e.target.value)} required><option value="">Velg kamp …</option>{matches.map((match) => <option key={match.id} value={match.id}>{match.date} · Samnanger – {match.opponent}</option>)}</select></label>
+        <label className="wide">Tittel<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Gjenvinning og gjennombrudd" required/></label>
+        <label>Kategori<select value={category} onChange={(e) => setCategory(e.target.value)}><option>Analyse</option><option>Angrep</option><option>Forsvar</option><option>Press</option><option>Overgang</option><option>Mål</option><option>Sjanse</option><option>Dødball</option></select></label>
+        <label>Starttid<input value={start} onChange={(e) => setStart(e.target.value)} placeholder="35:18" inputMode="numeric" required/></label>
+        <label>Sluttid<input value={end} onChange={(e) => setEnd(e.target.value)} placeholder="35:42" inputMode="numeric" required/></label>
+      </div>
+      <p className="form-help">Bruk tidspunktet som vises i videospilleren, for eksempel 35:18.</p>
+      <button className="admin-primary" disabled={saving || !matches.length}>{saving ? <LoaderCircle/> : <Plus/>} Lag klipp</button>
+    </form>
+    <div className="admin-card list-card">
+      <div className="admin-card-head"><span className="admin-icon violet"><Video/></span><div><small>{selected?.opponent?.toUpperCase() ?? "KAMP"}</small><h2>Tidskodede klipp</h2></div></div>
+      <div className="admin-list">{!selected?.clips?.length ? <p className="admin-empty">Ingen klipp i denne kampen ennå.</p> : selected.clips.map((clip) => <article key={clip.id} className="clip-row"><span className="time-badge">{clip.minute}</span><div className="row-main"><small>{clip.category}</small><b>{clip.title}</b><span>{formatClock(clip.start)}–{formatClock(clip.end)}</span></div><button type="button" className="icon-danger" title="Slett klipp" disabled={saving} onClick={() => confirm(`Slette klippet «${clip.title}»?`) && mutate({ method: "DELETE" }, "Klippet ble slettet", `/api/admin?matchId=${encodeURIComponent(selected.id)}&clipId=${encodeURIComponent(clip.id)}`)}><Trash2/></button></article>)}</div>
+    </div>
+  </section>;
+}
+
+function UsersPanel({ users, saving, mutate }: { users: ManagedUser[]; saving: boolean; mutate: (init: RequestInit, success: string, path?: string) => Promise<boolean> }) {
+  return <section className="admin-card users-card"><div className="admin-card-head"><span className="admin-icon lime"><Users/></span><div><small>TILGANG</small><h2>Brukere og godkjenning</h2></div></div><div className="user-list">{users.map((item) => <article key={item.id} className="user-row"><span className={`user-avatar ${item.approved ? "approved" : ""}`}>{(item.name || item.email || "?")[0].toUpperCase()}</span><div className="row-main"><b>{item.name || "Uten navn"}</b><span>{item.email}</span><small>{item.approved ? item.role === "admin" ? "Administrator" : "Godkjent bruker" : "Venter på godkjenning"}</small></div><label className="role-select"><span>Rolle</span><select value={item.role} disabled={!item.approved || saving} onChange={(e) => mutate({ method: "PATCH", body: JSON.stringify({ action: "updateUser", userId: item.id, approved: true, role: e.target.value }) }, "Rollen ble oppdatert")}><option value="viewer">Bruker</option><option value="admin">Administrator</option></select></label><button className={item.approved ? "access-button revoke" : "access-button approve"} disabled={saving} onClick={() => mutate({ method: "PATCH", body: JSON.stringify({ action: "updateUser", userId: item.id, approved: !item.approved, role: item.approved ? "viewer" : item.role }) }, item.approved ? "Tilgangen ble fjernet" : "Brukeren ble godkjent")}>{item.approved ? "Fjern tilgang" : <><Check/> Godkjenn</>}</button></article>)}</div></section>;
+}
+
+function toSeconds(value: string) {
+  const parts = value.trim().split(":").map(Number);
+  if (parts.some((part) => !Number.isFinite(part) || part < 0)) return Number.NaN;
+  if (parts.length === 1) return parts[0];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return Number.NaN;
+}
+const formatClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+const formatBytes = (bytes: number) => bytes >= 1_000_000_000 ? `${(bytes / 1_000_000_000).toFixed(2)} GB` : `${Math.round(bytes / 1_000_000)} MB`;

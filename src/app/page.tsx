@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { GoogleAuthProvider, User, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase-client";
-import { ArrowRight, CalendarDays, ChevronRight, CirclePlay, Clock3, Film, Goal, LockKeyhole, LogOut, Play, ShieldCheck, Sparkles, Trophy, Users } from "lucide-react";
+import { ArrowRight, CalendarDays, ChevronRight, CirclePlay, Clock3, Film, Goal, LockKeyhole, LogOut, Play, Settings, ShieldCheck, Sparkles, Trophy, Users } from "lucide-react";
 
 type Clip = { id: string; title: string; minute?: string; category?: string; start?: number; end?: number };
 type Match = { id: string; opponent: string; date: string; venue?: string; homeScore?: number; awayScore?: number; isHome?: boolean; competition?: string; clips?: Clip[] };
@@ -34,7 +34,7 @@ export default function Home() {
       const me = await api(current, "/api/me");
       const profile = await me.json();
       setApproved(profile.approved === true);
-      setRole(typeof profile.role === "string" ? profile.role : "viewer");
+      setRole(profile.role ?? "viewer");
       if (profile.approved) {
         const response = await api(current, "/api/matches");
         const data = await response.json();
@@ -73,7 +73,7 @@ export default function Home() {
   return <main className="app-shell">
     <header className="topbar">
       <a className="brand" href="#"><span className="brand-mark"><Goal/></span><span><b>SAMNANGER</b><small>KAMPROM</small></span></a>
-      <div className="top-actions"><span className="secure"><ShieldCheck/> Sikker tilgang</span>{role === "admin" && <a className="ghost" style={{textDecoration:"none"}} href="/admin">Administrasjon</a>}<button className="avatar" onClick={logout} title="Logg ut">{user.displayName?.[0] ?? user.email?.[0]?.toUpperCase() ?? "S"}<LogOut/></button></div>
+      <div className="top-actions"><span className="secure"><ShieldCheck/> Sikker tilgang</span>{role === "admin" && <a className="admin-link" href="/admin"><Settings/> Administrer</a>}<button className="avatar" onClick={logout} title="Logg ut">{user.displayName?.[0] ?? user.email?.[0]?.toUpperCase() ?? "S"}<LogOut/></button></div>
     </header>
 
     <section className="hero">
@@ -100,7 +100,7 @@ export default function Home() {
       <section className="clips">{selected?.clips?.length ? selected.clips.map((clip, index) => <button className="clip" key={clip.id} onClick={() => play(selected, clip)}><span className={`clip-no n${index%3}`}>{String(index+1).padStart(2,"0")}</span><span className="clip-text"><small>{clip.category ?? "Analyse"} · {clip.minute ?? ""}</small><b>{clip.title}</b></span><span className="clip-play"><Play fill="currentColor"/></span><ChevronRight/></button>) : <p className="muted">Ingen klipp er markert i denne kampen ennå.</p>}</section>
     </>}
     {error && <div className="toast">{error}<button onClick={() => setError("")}>×</button></div>}
-    <footer><LockKeyhole/> Privat laginnhold · Beskyttet med Firebase og tidsbegrenset videotilgang</footer>
+    <footer><LockKeyhole/> Privat laginnhold · Beskyttet med Firebase og øktbundet videostrømming</footer>
   </main>;
 }
 
