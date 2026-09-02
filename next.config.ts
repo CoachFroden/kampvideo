@@ -7,9 +7,12 @@ const nextConfig: NextConfig = {
       source: "/(.*)",
       headers: [
         { key: "X-Content-Type-Options", value: "nosniff" },
-        { key: "Referrer-Policy", value: "same-origin" },
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
         { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-        { key: "X-Frame-Options", value: "DENY" },
+        {
+          key: "Content-Security-Policy",
+          value: "frame-ancestors 'self' https://coachfroden.github.io https://samnanger-g14-f10a1.web.app https://samnanger-g14-f10a1.firebaseapp.com",
+        },
       ],
     }];
   },
