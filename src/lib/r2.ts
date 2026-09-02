@@ -1,6 +1,7 @@
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-export function r2Client() {
+function client() {
   const accountId = process.env.R2_ACCOUNT_ID;
   if (!accountId) throw new Error("R2 er ikke konfigurert");
   return new S3Client({
@@ -13,17 +14,17 @@ export function r2Client() {
   });
 }
 
-export function videoCommand(key: string, range?: string | null) {
+export async function signedVideoUrl(key: string) {
   if (!key || key.includes("..") || key.startsWith("/")) throw new Error("Ugyldig videonøkkel");
-  return new GetObjectCommand({
+  return getSignedUrl(client(), new GetObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
     Key: key,
-    Range: range || undefined,
-  });
+    ResponseContentDisposition: "inline",
+  }), { expiresIn: 60 * 60 * 2 });
 }
 
 export async function listVideos() {
-  const result = await r2Client().send(new ListObjectsV2Command({ Bucket: process.env.R2_BUCKET_NAME }));
+  const result = await client().send(new ListObjectsV2Command({ Bucket: process.env.R2_BUCKET_NAME }));
   return (result.Contents ?? [])
     .filter((item) => item.Key && /\.(mp4|mov|m4v|webm)$/i.test(item.Key))
     .map((item) => ({ key: item.Key!, size: item.Size ?? 0, modified: item.LastModified?.toISOString() ?? null }))
