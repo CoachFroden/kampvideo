@@ -4,9 +4,9 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { User, onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/lib/firebase-client";
-import { ArrowLeft, CalendarDays, Check, CircleUserRound, Clock3, Film, FolderOpen, Goal, LoaderCircle, Plus, RefreshCw, ShieldCheck, Trash2, Users, Video } from "lucide-react";
+import { ArrowLeft, CalendarDays, Check, CircleUserRound, Clock3, Film, FolderOpen, Goal, LoaderCircle, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Users, Video, X } from "lucide-react";
 
-type Clip = { id: string; title: string; category: string; start: number; end: number; minute: string };
+type Clip = { id: string; title: string; category: string; start: number; end: number; minute: string; good?: string; improve?: string };
 type Match = { id: string; opponent: string; date: string; venue?: string; competition?: string; homeScore: number; awayScore: number; isHome?: boolean; videoKey: string; clips?: Clip[] };
 type ManagedUser = { id: string; email: string; name: string; approved: boolean; role: "viewer" | "admin"; createdAt?: string | null };
 type VideoFile = { key: string; size: number; modified?: string | null };
@@ -94,14 +94,24 @@ export default function AdminPage() {
 
 function MatchesPanel({ data, saving, mutate }: { data: AdminData; saving: boolean; mutate: (init: RequestInit, success: string, path?: string) => Promise<boolean> }) {
   const [form, setForm] = useState({ opponent: "", date: "", venue: "Hagabotnane kunstgress", competition: "G14 · Seriekamp", homeScore: "", awayScore: "", isHome: true, videoKey: "" });
+  const [editingId, setEditingId] = useState("");
+  function reset() {
+    setEditingId("");
+    setForm({ opponent: "", date: "", venue: "Hagabotnane kunstgress", competition: "G14 · Seriekamp", homeScore: "", awayScore: "", isHome: true, videoKey: "" });
+  }
+  function edit(match: Match) {
+    setEditingId(match.id);
+    setForm({ opponent: match.opponent, date: match.date, venue: match.venue ?? "", competition: match.competition ?? "", homeScore: String(match.homeScore), awayScore: String(match.awayScore), isHome: match.isHome !== false, videoKey: match.videoKey });
+    window.scrollTo({ top: 300, behavior: "smooth" });
+  }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const ok = await mutate({ method: "POST", body: JSON.stringify({ action: "createMatch", match: form }) }, "Kampen ble lagt til");
-    if (ok) setForm((value) => ({ ...value, opponent: "", date: "", homeScore: "", awayScore: "", videoKey: "" }));
+    const ok = await mutate({ method: editingId ? "PATCH" : "POST", body: JSON.stringify({ action: editingId ? "updateMatch" : "createMatch", matchId: editingId, match: form }) }, editingId ? "Kampen ble oppdatert" : "Kampen ble lagt til");
+    if (ok) reset();
   }
   return <section className="admin-grid">
     <form className="admin-card admin-form" onSubmit={submit}>
-      <div className="admin-card-head"><span className="admin-icon lime"><Plus/></span><div><small>NY KAMP</small><h2>Legg til kamp</h2></div></div>
+      <div className="admin-card-head"><span className="admin-icon lime">{editingId ? <Pencil/> : <Plus/>}</span><div><small>{editingId ? "REDIGERER" : "NY KAMP"}</small><h2>{editingId ? "Rediger kamp" : "Legg til kamp"}</h2></div></div>
       <div className="form-grid">
         <label className="wide">Motstander<input value={form.opponent} onChange={(e) => setForm({ ...form, opponent: e.target.value })} placeholder="Bønes 2" required/></label>
         <label>Dato<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required/></label>
@@ -112,11 +122,12 @@ function MatchesPanel({ data, saving, mutate }: { data: AdminData; saving: boole
         <label className="wide file-select">Videofil<select value={form.videoKey} onChange={(e) => setForm({ ...form, videoKey: e.target.value })} required><option value="">Velg fil fra R2 …</option>{data.files.map((file) => <option key={file.key} value={file.key}>{file.key} · {formatBytes(file.size)}</option>)}</select><FolderOpen/></label>
         <label className="toggle wide"><input type="checkbox" checked={form.isHome} onChange={(e) => setForm({ ...form, isHome: e.target.checked })}/><span/> Samnanger er hjemmelag</label>
       </div>
-      <button className="admin-primary" disabled={saving}>{saving ? <LoaderCircle/> : <Plus/>} Legg til kamp</button>
+      <button className="admin-primary" disabled={saving}>{saving ? <LoaderCircle/> : editingId ? <Check/> : <Plus/>} {editingId ? "Lagre endringer" : "Legg til kamp"}</button>
+      {editingId && <button type="button" className="admin-cancel" onClick={reset}><X/> Avbryt redigering</button>}
     </form>
     <div className="admin-card list-card">
       <div className="admin-card-head"><span className="admin-icon violet"><Film/></span><div><small>ARKIV</small><h2>Registrerte kamper</h2></div></div>
-      <div className="admin-list">{data.matches.length === 0 ? <p className="admin-empty">Ingen kamper registrert.</p> : data.matches.map((match) => <article key={match.id} className="match-row"><div className="match-date"><b>{new Date(`${match.date}T12:00:00`).getDate()}</b><span>{new Date(`${match.date}T12:00:00`).toLocaleDateString("nb-NO", { month: "short" })}</span></div><div className="row-main"><small>{match.competition}</small><b>Samnanger {match.homeScore}–{match.awayScore} {match.opponent}</b><span>{match.videoKey}</span></div><button type="button" className="icon-danger" title="Slett kamp" disabled={saving} onClick={() => confirm(`Slette kampen mot ${match.opponent}?`) && mutate({ method: "DELETE" }, "Kampen ble slettet", `/api/admin?matchId=${encodeURIComponent(match.id)}`)}><Trash2/></button></article>)}</div>
+      <div className="admin-list">{data.matches.length === 0 ? <p className="admin-empty">Ingen kamper registrert.</p> : data.matches.map((match) => <article key={match.id} className="match-row"><div className="match-date"><b>{new Date(`${match.date}T12:00:00`).getDate()}</b><span>{new Date(`${match.date}T12:00:00`).toLocaleDateString("nb-NO", { month: "short" })}</span></div><div className="row-main"><small>{match.competition}</small><b>Samnanger {match.homeScore}–{match.awayScore} {match.opponent}</b><span>{match.videoKey}</span></div><div className="row-actions"><button type="button" className="icon-edit" title="Rediger kamp" disabled={saving} onClick={() => edit(match)}><Pencil/></button><button type="button" className="icon-danger" title="Slett kamp" disabled={saving} onClick={() => confirm(`Slette kampen mot ${match.opponent}?`) && mutate({ method: "DELETE" }, "Kampen ble slettet", `/api/admin?matchId=${encodeURIComponent(match.id)}`)}><Trash2/></button></div></article>)}</div>
     </div>
   </section>;
 }
@@ -124,29 +135,35 @@ function MatchesPanel({ data, saving, mutate }: { data: AdminData; saving: boole
 function ClipsPanel({ matches, saving, mutate }: { matches: Match[]; saving: boolean; mutate: (init: RequestInit, success: string, path?: string) => Promise<boolean> }) {
   const [matchId, setMatchId] = useState(matches[0]?.id ?? "");
   const [title, setTitle] = useState(""); const [category, setCategory] = useState("Analyse"); const [start, setStart] = useState(""); const [end, setEnd] = useState("");
+  const [good, setGood] = useState(""); const [improve, setImprove] = useState(""); const [editingClipId, setEditingClipId] = useState("");
   const selected = matches.find((item) => item.id === matchId) ?? matches[0];
   useEffect(() => { if (!matchId && matches[0]) setMatchId(matches[0].id); }, [matchId, matches]);
+  function resetClip() { setEditingClipId(""); setTitle(""); setCategory("Analyse"); setStart(""); setEnd(""); setGood(""); setImprove(""); }
+  function editClip(clip: Clip) { setEditingClipId(clip.id); setTitle(clip.title); setCategory(clip.category); setStart(formatClock(clip.start)); setEnd(formatClock(clip.end)); setGood(clip.good ?? ""); setImprove(clip.improve ?? ""); window.scrollTo({ top: 300, behavior: "smooth" }); }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const ok = await mutate({ method: "POST", body: JSON.stringify({ action: "createClip", matchId, clip: { title, category, start: toSeconds(start), end: toSeconds(end) } }) }, "Klippet ble lagt til");
-    if (ok) { setTitle(""); setStart(""); setEnd(""); }
+    const ok = await mutate({ method: editingClipId ? "PATCH" : "POST", body: JSON.stringify({ action: editingClipId ? "updateClip" : "createClip", matchId, clipId: editingClipId, clip: { title, category, start: toSeconds(start), end: toSeconds(end), good, improve } }) }, editingClipId ? "Klippet ble oppdatert" : "Klippet ble lagt til");
+    if (ok) resetClip();
   }
   return <section className="admin-grid">
     <form className="admin-card admin-form" onSubmit={submit}>
-      <div className="admin-card-head"><span className="admin-icon blue"><Clock3/></span><div><small>NYTT KLIPP</small><h2>Marker situasjon</h2></div></div>
+      <div className="admin-card-head"><span className="admin-icon blue">{editingClipId ? <Pencil/> : <Clock3/>}</span><div><small>{editingClipId ? "REDIGERER" : "NYTT KLIPP"}</small><h2>{editingClipId ? "Rediger klipp" : "Marker situasjon"}</h2></div></div>
       <div className="form-grid">
         <label className="wide">Kamp<select value={matchId} onChange={(e) => setMatchId(e.target.value)} required><option value="">Velg kamp …</option>{matches.map((match) => <option key={match.id} value={match.id}>{match.date} · Samnanger – {match.opponent}</option>)}</select></label>
         <label className="wide">Tittel<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Gjenvinning og gjennombrudd" required/></label>
         <label>Kategori<select value={category} onChange={(e) => setCategory(e.target.value)}><option>Analyse</option><option>Angrep</option><option>Forsvar</option><option>Press</option><option>Overgang</option><option>Mål</option><option>Sjanse</option><option>Dødball</option></select></label>
         <label>Starttid<input value={start} onChange={(e) => setStart(e.target.value)} placeholder="35:18" inputMode="numeric" required/></label>
         <label>Sluttid<input value={end} onChange={(e) => setEnd(e.target.value)} placeholder="35:42" inputMode="numeric" required/></label>
+        <label className="wide">Dette er bra<textarea value={good} onChange={(e) => setGood(e.target.value)} placeholder="Hva gjør laget eller spilleren godt i situasjonen?" rows={3}/></label>
+        <label className="wide">Dette bør forbedres<textarea value={improve} onChange={(e) => setImprove(e.target.value)} placeholder="Hva bør gjøres annerledes eller trenes mer på?" rows={3}/></label>
       </div>
       <p className="form-help">Bruk tidspunktet som vises i videospilleren, for eksempel 35:18.</p>
-      <button className="admin-primary" disabled={saving || !matches.length}>{saving ? <LoaderCircle/> : <Plus/>} Lag klipp</button>
+      <button className="admin-primary" disabled={saving || !matches.length}>{saving ? <LoaderCircle/> : editingClipId ? <Check/> : <Plus/>} {editingClipId ? "Lagre endringer" : "Lag klipp"}</button>
+      {editingClipId && <button type="button" className="admin-cancel" onClick={resetClip}><X/> Avbryt redigering</button>}
     </form>
     <div className="admin-card list-card">
       <div className="admin-card-head"><span className="admin-icon violet"><Video/></span><div><small>{selected?.opponent?.toUpperCase() ?? "KAMP"}</small><h2>Tidskodede klipp</h2></div></div>
-      <div className="admin-list">{!selected?.clips?.length ? <p className="admin-empty">Ingen klipp i denne kampen ennå.</p> : selected.clips.map((clip) => <article key={clip.id} className="clip-row"><span className="time-badge">{clip.minute}</span><div className="row-main"><small>{clip.category}</small><b>{clip.title}</b><span>{formatClock(clip.start)}–{formatClock(clip.end)}</span></div><button type="button" className="icon-danger" title="Slett klipp" disabled={saving} onClick={() => confirm(`Slette klippet «${clip.title}»?`) && mutate({ method: "DELETE" }, "Klippet ble slettet", `/api/admin?matchId=${encodeURIComponent(selected.id)}&clipId=${encodeURIComponent(clip.id)}`)}><Trash2/></button></article>)}</div>
+      <div className="admin-list">{!selected?.clips?.length ? <p className="admin-empty">Ingen klipp i denne kampen ennå.</p> : selected.clips.map((clip) => <article key={clip.id} className="clip-row"><span className="time-badge">{clip.minute}</span><div className="row-main"><small>{clip.category}</small><b>{clip.title}</b><span>{formatClock(clip.start)}–{formatClock(clip.end)}</span>{clip.good && <p className="clip-note good"><b>Bra:</b> {clip.good}</p>}{clip.improve && <p className="clip-note improve"><b>Forbedre:</b> {clip.improve}</p>}</div><div className="row-actions"><button type="button" className="icon-edit" title="Rediger klipp" disabled={saving} onClick={() => editClip(clip)}><Pencil/></button><button type="button" className="icon-danger" title="Slett klipp" disabled={saving} onClick={() => confirm(`Slette klippet «${clip.title}»?`) && mutate({ method: "DELETE" }, "Klippet ble slettet", `/api/admin?matchId=${encodeURIComponent(selected.id)}&clipId=${encodeURIComponent(clip.id)}`)}><Trash2/></button></div></article>)}</div>
     </div>
   </section>;
 }
