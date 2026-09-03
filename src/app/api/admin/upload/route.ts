@@ -4,7 +4,6 @@ import {
   abortMultipartVideoUpload,
   completeMultipartVideoUpload,
   createMultipartVideoUpload,
-  ensureUploadCors,
   sanitizeVideoKey,
   signedUploadPartUrl,
 } from "@/lib/r2";
@@ -37,8 +36,9 @@ export async function POST(request: NextRequest) {
         return Response.json({ error: "Videofilen er for stor" }, { status: 400 });
       }
 
-      const origin = request.headers.get("origin") || new URL(request.url).origin;
-      await ensureUploadCors(origin);
+      // CORS for browser uploads is configured once on the R2 bucket.
+      // Do not try to mutate bucket CORS here: ordinary R2 object tokens may
+      // have permission to upload objects without permission to change bucket settings.
       const key = sanitizeVideoKey(fileName, String(body.date ?? ""), String(body.opponent ?? ""));
       const uploadId = await createMultipartVideoUpload(key, contentType);
       const urls = await Promise.all(
