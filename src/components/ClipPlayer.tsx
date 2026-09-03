@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Expand, ExternalLink, Pause, Play, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { Expand, ExternalLink, Minimize, Pause, Play, RotateCcw, Volume2, VolumeX } from "lucide-react";
 
 type Clip = {
   id: string;
@@ -37,6 +37,7 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
   const [muted, setMuted] = useState(false);
   const [ready, setReady] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   function clearHideTimer() {
     if (hideTimerRef.current) {
@@ -70,6 +71,12 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
       setControlsVisible(true);
     }
   }, [playing]);
+
+  useEffect(() => {
+    const syncFullscreenState = () => setIsFullscreen(document.fullscreenElement === shellRef.current);
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+  }, []);
 
   function clampIntoClip(video: HTMLVideoElement) {
     if (video.currentTime < start || video.currentTime > end) video.currentTime = start;
@@ -120,14 +127,21 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
     setMuted(video.muted);
   }
 
-  async function fullscreen() {
+  async function toggleFullscreen() {
     showControls(true);
     const shell = shellRef.current;
     const video = videoRef.current;
+
+    if (document.fullscreenElement) {
+      await document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+
     if (shell?.requestFullscreen) {
       await shell.requestFullscreen().catch(() => undefined);
       return;
     }
+
     const iosVideo = video as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
     iosVideo?.webkitEnterFullscreen?.();
   }
@@ -202,7 +216,7 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
 
       <button type="button" className="clip-control-button" onClick={replay} aria-label="Spill klippet på nytt"><RotateCcw/></button>
       <button type="button" className="clip-control-button" onClick={toggleMute} aria-label={muted ? "Slå på lyd" : "Demp lyd"}>{muted ? <VolumeX/> : <Volume2/>}</button>
-      <button type="button" className="clip-control-button" onClick={() => void fullscreen()} aria-label="Fullskjerm"><Expand/></button>
+      <button type="button" className="clip-control-button" onClick={() => void toggleFullscreen()} aria-label={isFullscreen ? "Avslutt fullskjerm" : "Fullskjerm"}>{isFullscreen ? <Minimize/> : <Expand/>}</button>
     </div>
 
     <button type="button" className="open-full-match" onClick={() => { showControls(true); onOpenFullMatch(); }}>
