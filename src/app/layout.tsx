@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./archive.css";
 import "./admin.css";
 import "./admin-upload.css";
 
