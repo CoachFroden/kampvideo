@@ -28,6 +28,7 @@ function clock(seconds: number) {
 export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const start = Math.max(0, Number(clip.start ?? 0));
   const end = Math.max(start, Number(clip.end ?? start));
   const duration = Math.max(0, end - start);
@@ -35,12 +36,40 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [ready, setReady] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+
+  function clearHideTimer() {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }
+
+  function showControls(autoHide = true) {
+    setControlsVisible(true);
+    clearHideTimer();
+    if (!autoHide) return;
+    hideTimerRef.current = setTimeout(() => {
+      if (!videoRef.current?.paused) setControlsVisible(false);
+    }, 5000);
+  }
 
   useEffect(() => {
     setRelativeTime(0);
     setPlaying(false);
     setReady(false);
+    setControlsVisible(true);
+    clearHideTimer();
+    return clearHideTimer;
   }, [src, clip.id, start, end]);
+
+  useEffect(() => {
+    if (playing) showControls(true);
+    else {
+      clearHideTimer();
+      setControlsVisible(true);
+    }
+  }, [playing]);
 
   function clampIntoClip(video: HTMLVideoElement) {
     if (video.currentTime < start || video.currentTime > end) video.currentTime = start;
@@ -53,12 +82,14 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
       video.currentTime = start;
       setRelativeTime(0);
     }
+    showControls(true);
     try { await video.play(); } catch { /* Autoplay can be blocked; user can press play. */ }
   }
 
   function togglePlayback() {
     const video = videoRef.current;
     if (!video) return;
+    showControls(true);
     if (video.paused) void startPlayback();
     else video.pause();
   }
@@ -66,6 +97,7 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
   function seek(relative: number) {
     const video = videoRef.current;
     if (!video) return;
+    showControls(true);
     const bounded = Math.min(duration, Math.max(0, relative));
     video.currentTime = start + bounded;
     setRelativeTime(bounded);
@@ -74,6 +106,7 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
   function replay() {
     const video = videoRef.current;
     if (!video) return;
+    showControls(true);
     video.currentTime = start;
     setRelativeTime(0);
     void video.play().catch(() => undefined);
@@ -82,11 +115,13 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
   function toggleMute() {
     const video = videoRef.current;
     if (!video) return;
+    showControls(true);
     video.muted = !video.muted;
     setMuted(video.muted);
   }
 
   async function fullscreen() {
+    showControls(true);
     const shell = shellRef.current;
     const video = videoRef.current;
     if (shell?.requestFullscreen) {
@@ -97,7 +132,12 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
     iosVideo?.webkitEnterFullscreen?.();
   }
 
-  return <div className="clip-player" ref={shellRef}>
+  return <div
+    className={`clip-player ${controlsVisible ? "ui-visible" : "ui-hidden"}`}
+    ref={shellRef}
+    onMouseMove={() => showControls(true)}
+    onPointerDown={() => showControls(true)}
+  >
     <video
       ref={videoRef}
       src={src}
@@ -111,6 +151,7 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
         video.currentTime = start;
         setRelativeTime(0);
         setReady(true);
+        showControls(true);
         void video.play().catch(() => undefined);
       }}
       onSeeking={event => clampIntoClip(event.currentTarget)}
@@ -141,7 +182,7 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
 
     {!ready && <div className="clip-loading">Laster klippet …</div>}
 
-    <div className="clip-controls" onClick={event => event.stopPropagation()}>
+    <div className="clip-controls" onClick={event => { event.stopPropagation(); showControls(true); }}>
       <button type="button" className="clip-control-button main" onClick={togglePlayback} aria-label={playing ? "Pause" : "Spill av"}>
         {playing ? <Pause fill="currentColor"/> : <Play fill="currentColor"/>}
       </button>
@@ -164,7 +205,7 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
       <button type="button" className="clip-control-button" onClick={() => void fullscreen()} aria-label="Fullskjerm"><Expand/></button>
     </div>
 
-    <button type="button" className="open-full-match" onClick={onOpenFullMatch}>
+    <button type="button" className="open-full-match" onClick={() => { showControls(true); onOpenFullMatch(); }}>
       <ExternalLink/> Se i hele kampen
     </button>
   </div>;
