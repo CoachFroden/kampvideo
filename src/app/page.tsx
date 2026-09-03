@@ -1,16 +1,29 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { GoogleAuthProvider, User, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase-client";
-import { ArrowRight, CalendarDays, ChevronRight, CirclePlay, Clock3, Film, Goal, LockKeyhole, LogOut, Play, Settings, ShieldCheck, Sparkles, Trophy, Users } from "lucide-react";
+import { ArrowRight, CalendarDays, ChevronRight, CirclePlay, Clock3, Film, Goal, LockKeyhole, LogOut, MapPin, Play, Search, Settings, ShieldCheck, Sparkles, Trophy, Users, X } from "lucide-react";
 
 type Clip = { id: string; title: string; minute?: string; category?: string; start?: number; end?: number; good?: string; improve?: string };
 type Match = { id: string; opponent: string; date: string; venue?: string; homeScore?: number; awayScore?: number; isHome?: boolean; competition?: string; clips?: Clip[] };
+type ArchiveFilter = "all" | "win" | "draw" | "loss";
 
 async function api(user: User, path: string, init?: RequestInit) {
   const token = await user.getIdToken();
   return fetch(path, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...init?.headers } });
+}
+
+function resultOf(match: Match): ArchiveFilter | "unknown" {
+  if (typeof match.homeScore !== "number" || typeof match.awayScore !== "number") return "unknown";
+  if (match.homeScore > match.awayScore) return "win";
+  if (match.homeScore < match.awayScore) return "loss";
+  return "draw";
+}
+
+function formatDate(date: string) {
+  if (!date) return "Dato ikke satt";
+  return new Date(`${date}T12:00:00`).toLocaleDateString("nb-NO", { day: "numeric", month: "short", year: "numeric" });
 }
 
 export default function Home() {
@@ -25,6 +38,8 @@ export default function Home() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [showMatches, setShowMatches] = useState(false);
+  const [archiveQuery, setArchiveQuery] = useState("");
+  const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("all");
 
   useEffect(() => onAuthStateChanged(auth, async current => {
     setUser(current); setVideoUrl("");
@@ -73,6 +88,21 @@ export default function Home() {
     await signOut(auth);
   }
 
+  const filteredMatches = useMemo(() => {
+    const q = archiveQuery.trim().toLowerCase();
+    return matches.filter(match => {
+      const matchesFilter = archiveFilter === "all" || resultOf(match) === archiveFilter;
+      const haystack = `${match.opponent} ${match.competition ?? ""} ${match.venue ?? ""} ${match.date}`.toLowerCase();
+      return matchesFilter && (!q || haystack.includes(q));
+    });
+  }, [matches, archiveFilter, archiveQuery]);
+
+  const resultCounts = useMemo(() => ({
+    win: matches.filter(match => resultOf(match) === "win").length,
+    draw: matches.filter(match => resultOf(match) === "draw").length,
+    loss: matches.filter(match => resultOf(match) === "loss").length,
+  }), [matches]);
+
   if (loading) return <main className="center"><div className="loader"/><span>Sikrer kamprommet …</span></main>;
   if (!user) return <Login email={email} password={password} error={error} setEmail={setEmail} setPassword={setPassword} onEmail={emailLogin} onGoogle={() => signInWithPopup(auth, new GoogleAuthProvider())}/>;
   if (!approved) return <Pending user={user} logout={logout}/>;
@@ -97,14 +127,41 @@ export default function Home() {
     </section>
 
     {matches.length === 0 ? <section className="empty"><Film/><h2>Arkivet er klart</h2><p>Ingen kamper er registrert ennå. Første R2-film kobles til når kampdataene legges inn.</p></section> : <>
-      <section className="section-head"><div><span>{isLatest ? "NYESTE KAMP" : "VALGT KAMP"}</span><h2>{selected?.opponent ? `Samnanger – ${selected.opponent}` : "Kampvideo"}</h2></div><button type="button" className="ghost" style={{ display: "flex" }} onClick={() => setShowMatches(value => !value)}>{showMatches ? "Skjul kamper" : `Alle kamper (${matches.length})`} <ArrowRight/></button></section>
+      <section className="section-head"><div><span>{isLatest ? "NYESTE KAMP" : "VALGT KAMP"}</span><h2>{selected?.opponent ? `Samnanger – ${selected.opponent}` : "Kampvideo"}</h2></div><button type="button" className={`ghost archive-toggle ${showMatches ? "active" : ""}`} onClick={() => setShowMatches(value => !value)}>{showMatches ? <><X/> Lukk arkiv</> : <>Alle kamper <ArrowRight/></>}</button></section>
 
-      {showMatches && <section className="clips match-picker" style={{ marginBottom: 22 }} aria-label="Alle kamper">
-        {matches.map((match, index) => <button type="button" className="clip match-choice" style={selected?.id === match.id ? { borderColor: "var(--lime)" } : undefined} key={match.id} onClick={() => chooseMatch(match)}>
-          <span className={`clip-no n${index%3}`}>{match.date ? new Date(`${match.date}T12:00:00`).getDate() : "–"}</span>
-          <span className="clip-text"><small>{match.competition ?? "Kamp"} · {match.date || "Dato ikke satt"}</small><b>Samnanger {match.homeScore ?? "–"}–{match.awayScore ?? "–"} {match.opponent}</b>{match.venue && <span style={{ color: "var(--muted)", fontSize: 11, marginTop: 5, display: "block" }}>{match.venue}</span>}</span>
-          <ChevronRight/>
-        </button>)}
+      {showMatches && <section className="match-archive" aria-label="Kamparkiv">
+        <div className="archive-head">
+          <div><span className="eyebrow">KAMPARKIV</span><h2>Alle kamper</h2><p>Finn en kamp etter motstander, dato eller arena.</p></div>
+          <div className="archive-record"><b>{resultCounts.win}</b><span>SEIRE</span><i>·</i><b>{resultCounts.draw}</b><span>UAVGJORT</span><i>·</i><b>{resultCounts.loss}</b><span>TAP</span></div>
+        </div>
+
+        <div className="archive-tools">
+          <label className="archive-search"><Search/><input value={archiveQuery} onChange={e => setArchiveQuery(e.target.value)} placeholder="Søk motstander, arena …"/></label>
+          <div className="archive-filters" role="group" aria-label="Filtrer kamper">
+            <button className={archiveFilter === "all" ? "active" : ""} onClick={() => setArchiveFilter("all")}>Alle <b>{matches.length}</b></button>
+            <button className={archiveFilter === "win" ? "active" : ""} onClick={() => setArchiveFilter("win")}>Seier <b>{resultCounts.win}</b></button>
+            <button className={archiveFilter === "draw" ? "active" : ""} onClick={() => setArchiveFilter("draw")}>Uavgjort <b>{resultCounts.draw}</b></button>
+            <button className={archiveFilter === "loss" ? "active" : ""} onClick={() => setArchiveFilter("loss")}>Tap <b>{resultCounts.loss}</b></button>
+          </div>
+        </div>
+
+        {filteredMatches.length ? <div className="archive-grid">
+          {filteredMatches.map((match, index) => {
+            const result = resultOf(match);
+            const latest = match.id === matches[0]?.id;
+            const selectedMatch = match.id === selected?.id;
+            return <button type="button" className={`archive-card ${selectedMatch ? "selected" : ""}`} key={match.id} onClick={() => chooseMatch(match)}>
+              <div className="archive-card-top">
+                <div className="archive-date"><b>{match.date ? new Date(`${match.date}T12:00:00`).getDate() : "–"}</b><span>{match.date ? new Date(`${match.date}T12:00:00`).toLocaleDateString("nb-NO", { month: "short" }).replace(".", "") : ""}</span></div>
+                <div className="archive-tags">{latest && <span className="latest-tag">NYESTE</span>}{result !== "unknown" && <span className={`result-tag ${result}`}>{result === "win" ? "SEIER" : result === "draw" ? "UAVGJORT" : "TAP"}</span>}</div>
+              </div>
+              <small className="archive-competition">{match.competition ?? "Kamp"}</small>
+              <div className="archive-fixture"><span>SAMNANGER</span><b>{match.homeScore ?? "–"}<i>–</i>{match.awayScore ?? "–"}</b><span>{match.opponent.toUpperCase()}</span></div>
+              <div className="archive-meta"><span><CalendarDays/>{formatDate(match.date)}</span>{match.venue && <span><MapPin/>{match.venue}</span>}</div>
+              <div className="archive-card-foot"><span>{match.isHome === false ? "Bortekamp" : "Hjemmekamp"}</span><span>{match.clips?.length ?? 0} klipp</span><strong>Åpne kamp <ChevronRight/></strong></div>
+            </button>;
+          })}
+        </div> : <div className="archive-empty"><Search/><b>Ingen kamper funnet</b><span>Prøv et annet søk eller filter.</span></div>}
       </section>}
 
       {selected && <section className="featured" id="selected-match">
