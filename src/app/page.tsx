@@ -24,6 +24,7 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [showMatches, setShowMatches] = useState(false);
 
   useEffect(() => onAuthStateChanged(auth, async current => {
     setUser(current); setVideoUrl("");
@@ -51,9 +52,16 @@ export default function Home() {
     catch { setError("E-post eller passord stemmer ikke."); }
   }
 
+  function chooseMatch(match: Match) {
+    setSelected(match);
+    setVideoUrl("");
+    setShowMatches(false);
+    window.setTimeout(() => document.getElementById("selected-match")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  }
+
   async function play(match: Match, clip?: Clip) {
     if (!user) return;
-    setSelected(match); setVideoUrl("");
+    setSelected(match); setVideoUrl(""); setShowMatches(false);
     const response = await api(user, "/api/video-url", { method: "POST", body: JSON.stringify({ matchId: match.id, clipId: clip?.id }) });
     const data = await response.json();
     if (!response.ok) { setError(data.error ?? "Kunne ikke åpne videoen."); return; }
@@ -70,6 +78,7 @@ export default function Home() {
   if (!approved) return <Pending user={user} logout={logout}/>;
 
   const allClips = matches.reduce((sum, match) => sum + (match.clips?.length ?? 0), 0);
+  const isLatest = selected?.id === matches[0]?.id;
   return <main className="app-shell">
     <header className="topbar">
       <a className="brand" href="#"><span className="brand-mark"><Goal/></span><span><b>SAMNANGER</b><small>KAMPROM</small></span></a>
@@ -88,8 +97,17 @@ export default function Home() {
     </section>
 
     {matches.length === 0 ? <section className="empty"><Film/><h2>Arkivet er klart</h2><p>Ingen kamper er registrert ennå. Første R2-film kobles til når kampdataene legges inn.</p></section> : <>
-      <section className="section-head"><div><span>NYESTE KAMP</span><h2>{selected?.opponent ? `Samnanger – ${selected.opponent}` : "Kampvideo"}</h2></div><button className="ghost">Alle kamper <ArrowRight/></button></section>
-      {selected && <section className="featured">
+      <section className="section-head"><div><span>{isLatest ? "NYESTE KAMP" : "VALGT KAMP"}</span><h2>{selected?.opponent ? `Samnanger – ${selected.opponent}` : "Kampvideo"}</h2></div><button type="button" className="ghost" onClick={() => setShowMatches(value => !value)}>{showMatches ? "Skjul kamper" : `Alle kamper (${matches.length})`} <ArrowRight/></button></section>
+
+      {showMatches && <section className="clips match-picker" aria-label="Alle kamper">
+        {matches.map((match, index) => <button type="button" className={`clip match-choice${selected?.id === match.id ? " selected" : ""}`} key={match.id} onClick={() => chooseMatch(match)}>
+          <span className={`clip-no n${index%3}`}>{match.date ? new Date(`${match.date}T12:00:00`).getDate() : "–"}</span>
+          <span className="clip-text"><small>{match.competition ?? "Kamp"} · {match.date || "Dato ikke satt"}</small><b>Samnanger {match.homeScore ?? "–"}–{match.awayScore ?? "–"} {match.opponent}</b>{match.venue && <span className="match-choice-venue">{match.venue}</span>}</span>
+          <ChevronRight/>
+        </button>)}
+      </section>}
+
+      {selected && <section className="featured" id="selected-match">
         <div className="video-wrap">
           {videoUrl ? <video src={videoUrl} controls autoPlay playsInline controlsList="nodownload" onContextMenu={e => e.preventDefault()}/> : <button className="poster" onClick={() => play(selected)}><span className="big-play"><Play fill="currentColor"/></span><small>SE HELE KAMPEN</small></button>}
           <div className="score"><span>SAM</span><b>{selected.homeScore ?? "–"}<i>:</i>{selected.awayScore ?? "–"}</b><span>{selected.opponent?.slice(0,3).toUpperCase()}</span></div>
