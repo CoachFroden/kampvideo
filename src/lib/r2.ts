@@ -8,6 +8,7 @@ import {
   PutBucketCorsCommand,
   UploadPartCommand,
   type CompletedPart,
+  type CORSRule,
 } from "@aws-sdk/client-s3";
 import { S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -73,7 +74,7 @@ export async function ensureUploadCors(origin: string) {
   if (!origin || !/^https?:\/\//i.test(origin)) return;
   const client = r2Client();
   const bucket = bucketName();
-  let rules: NonNullable<Awaited<ReturnType<typeof client.send>>["CORSRules"]> = [];
+  let rules: CORSRule[] = [];
   try {
     const existing = await client.send(new GetBucketCorsCommand({ Bucket: bucket }));
     rules = existing.CORSRules ?? [];
