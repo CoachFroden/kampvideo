@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./admin.css";
+import "./admin-upload.css";
 
 export const metadata: Metadata = {
   title: {
