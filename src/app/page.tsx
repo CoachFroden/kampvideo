@@ -97,12 +97,12 @@ export default function Home() {
     </section>
 
     {matches.length === 0 ? <section className="empty"><Film/><h2>Arkivet er klart</h2><p>Ingen kamper er registrert ennå. Første R2-film kobles til når kampdataene legges inn.</p></section> : <>
-      <section className="section-head"><div><span>{isLatest ? "NYESTE KAMP" : "VALGT KAMP"}</span><h2>{selected?.opponent ? `Samnanger – ${selected.opponent}` : "Kampvideo"}</h2></div><button type="button" className="ghost" onClick={() => setShowMatches(value => !value)}>{showMatches ? "Skjul kamper" : `Alle kamper (${matches.length})`} <ArrowRight/></button></section>
+      <section className="section-head"><div><span>{isLatest ? "NYESTE KAMP" : "VALGT KAMP"}</span><h2>{selected?.opponent ? `Samnanger – ${selected.opponent}` : "Kampvideo"}</h2></div><button type="button" className="ghost" style={{ display: "flex" }} onClick={() => setShowMatches(value => !value)}>{showMatches ? "Skjul kamper" : `Alle kamper (${matches.length})`} <ArrowRight/></button></section>
 
-      {showMatches && <section className="clips match-picker" aria-label="Alle kamper">
-        {matches.map((match, index) => <button type="button" className={`clip match-choice${selected?.id === match.id ? " selected" : ""}`} key={match.id} onClick={() => chooseMatch(match)}>
+      {showMatches && <section className="clips match-picker" style={{ marginBottom: 22 }} aria-label="Alle kamper">
+        {matches.map((match, index) => <button type="button" className="clip match-choice" style={selected?.id === match.id ? { borderColor: "var(--lime)" } : undefined} key={match.id} onClick={() => chooseMatch(match)}>
           <span className={`clip-no n${index%3}`}>{match.date ? new Date(`${match.date}T12:00:00`).getDate() : "–"}</span>
-          <span className="clip-text"><small>{match.competition ?? "Kamp"} · {match.date || "Dato ikke satt"}</small><b>Samnanger {match.homeScore ?? "–"}–{match.awayScore ?? "–"} {match.opponent}</b>{match.venue && <span className="match-choice-venue">{match.venue}</span>}</span>
+          <span className="clip-text"><small>{match.competition ?? "Kamp"} · {match.date || "Dato ikke satt"}</small><b>Samnanger {match.homeScore ?? "–"}–{match.awayScore ?? "–"} {match.opponent}</b>{match.venue && <span style={{ color: "var(--muted)", fontSize: 11, marginTop: 5, display: "block" }}>{match.venue}</span>}</span>
           <ChevronRight/>
         </button>)}
       </section>}
