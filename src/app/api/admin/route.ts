@@ -3,11 +3,12 @@ import { adminDb } from "@/lib/firebase-admin";
 import { listVideos } from "@/lib/r2";
 import { authError, requireAdmin } from "@/lib/server-auth";
 
-type ClipInput = { title?: unknown; category?: unknown; start?: unknown; end?: unknown; good?: unknown; improve?: unknown };
+type ClipInput = { title?: unknown; category?: unknown; start?: unknown; end?: unknown; good?: unknown; improve?: unknown; videoKey?: unknown };
 type MatchInput = { opponent?: unknown; date?: unknown; venue?: unknown; competition?: unknown; homeScore?: unknown; awayScore?: unknown; isHome?: unknown; videoKey?: unknown };
 
 const clean = (value: unknown, max = 120) => typeof value === "string" ? value.trim().slice(0, max) : "";
 const score = (value: unknown) => Number.isInteger(Number(value)) && Number(value) >= 0 && Number(value) <= 99 ? Number(value) : null;
+const preciseTime = (value: number) => Math.round(value * 100) / 100;
 
 export async function GET(request: Request) {
   try {
@@ -94,16 +95,35 @@ async function createMatch(input: MatchInput) {
   return Response.json({ ok: true, id: doc.id });
 }
 
+async function validateClipVideo(videoKey: string) {
+  if (!videoKey) return true;
+  const files = await listVideos();
+  return files.some((file) => file.key === videoKey);
+}
+
 async function createClip(matchId: string, input: ClipInput) {
   const title = clean(input.title);
   const category = clean(input.category, 60) || "Analyse";
+  const videoKey = clean(input.videoKey, 500);
   const start = Number(input.start);
   const end = Number(input.end);
   if (!matchId || !title || !Number.isFinite(start) || start < 0 || !Number.isFinite(end) || end <= start) {
     return Response.json({ error: "Klippet må ha tittel og gyldig start- og sluttid" }, { status: 400 });
   }
+  if (!(await validateClipVideo(videoKey))) return Response.json({ error: "Videofilen til klippet finnes ikke i R2" }, { status: 400 });
+
   const ref = adminDb().collection("matches").doc(matchId);
-  const clip = { id: crypto.randomUUID(), title, category, start: Math.floor(start), end: Math.floor(end), minute: formatTime(start), good: clean(input.good, 1200), improve: clean(input.improve, 1200) };
+  const clip = {
+    id: crypto.randomUUID(),
+    title,
+    category,
+    start: preciseTime(start),
+    end: preciseTime(end),
+    minute: videoKey ? "Eget klipp" : formatTime(start),
+    good: clean(input.good, 1200),
+    improve: clean(input.improve, 1200),
+    ...(videoKey ? { videoKey } : {}),
+  };
   await ref.update({ clips: FieldValue.arrayUnion(clip), updatedAt: FieldValue.serverTimestamp() });
   return Response.json({ ok: true, clip });
 }
@@ -133,21 +153,38 @@ async function updateMatch(matchId: string, input: MatchInput) {
 async function updateClip(matchId: string, clipId: string, input: ClipInput) {
   const title = clean(input.title);
   const category = clean(input.category, 60) || "Analyse";
+  const videoKey = clean(input.videoKey, 500);
   const start = Number(input.start);
   const end = Number(input.end);
   if (!matchId || !clipId || !title || !Number.isFinite(start) || start < 0 || !Number.isFinite(end) || end <= start) {
     return Response.json({ error: "Klippet må ha tittel og gyldig start- og sluttid" }, { status: 400 });
   }
+  if (!(await validateClipVideo(videoKey))) return Response.json({ error: "Videofilen til klippet finnes ikke i R2" }, { status: 400 });
+
   const ref = adminDb().collection("matches").doc(matchId);
   let found = false;
   await adminDb().runTransaction(async (transaction) => {
     const snap = await transaction.get(ref);
     if (!snap.exists) throw new Error("Kampen finnes ikke");
     const clips = Array.isArray(snap.data()?.clips) ? snap.data()!.clips : [];
-    const next = clips.map((clip: { id?: string }) => {
+    const next = clips.map((clip: { id?: string; videoKey?: string }) => {
       if (clip.id !== clipId) return clip;
       found = true;
-      return { ...clip, title, category, start: Math.floor(start), end: Math.floor(end), minute: formatTime(start), good: clean(input.good, 1200), improve: clean(input.improve, 1200) };
+      const previousVideoKey = clean(clip.videoKey, 500);
+      const nextClip: Record<string, unknown> = {
+        ...clip,
+        title,
+        category,
+        start: preciseTime(start),
+        end: preciseTime(end),
+        minute: videoKey ? "Eget klipp" : formatTime(start),
+        good: clean(input.good, 1200),
+        improve: clean(input.improve, 1200),
+      };
+      if (videoKey) nextClip.videoKey = videoKey;
+      else delete nextClip.videoKey;
+      if (previousVideoKey !== videoKey) nextClip.annotations = [];
+      return nextClip;
     });
     if (found) transaction.update(ref, { clips: next, updatedAt: FieldValue.serverTimestamp() });
   });
