@@ -99,7 +99,7 @@ function isIOS() {
 }
 
 function renderDrawing(drawing: Drawing) {
-  const strokeWidth = Math.max(2, drawing.strokeWidth);
+  const strokeWidth = Math.max(0.5, drawing.strokeWidth);
   const common = {
     stroke: drawing.color,
     strokeWidth,
@@ -160,11 +160,11 @@ function renderDrawing(drawing: Drawing) {
       y={start.y}
       fill={drawing.color}
       stroke="#06100b"
-      strokeWidth="4"
+      strokeWidth={Math.max(0.75, drawing.strokeWidth * 0.6)}
       vectorEffect="non-scaling-stroke"
       paintOrder="stroke"
-      fontSize="44"
-      fontWeight="700"
+      fontSize="32"
+      fontWeight="600"
       fontFamily="DM Sans, sans-serif"
     >{drawing.text}</text>;
   }
@@ -199,7 +199,7 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
   const [editingFrameId, setEditingFrameId] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>("arrow");
   const [color, setColor] = useState("#b8ff3d");
-  const [strokeWidth, setStrokeWidth] = useState(4);
+  const [strokeWidth, setStrokeWidth] = useState(1.5);
   const [draftDrawings, setDraftDrawings] = useState<Drawing[]>([]);
   const [previewDrawing, setPreviewDrawing] = useState<Drawing | null>(null);
   const [saving, setSaving] = useState(false);
@@ -675,7 +675,7 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
         <button type="button" className={tool === "freehand" ? "active" : ""} onClick={() => setTool("freehand")} title="Frihånd"><Pencil/><span>Frihånd</span></button>
         <button type="button" className={tool === "text" ? "active" : ""} onClick={() => setTool("text")} title="Tekst"><Type/><span>Tekst</span></button>
         <label className="annotation-color" title="Farge"><input type="color" value={color} onChange={event => setColor(event.target.value)}/></label>
-        <label className="annotation-width" title="Strektykkelse"><span>{strokeWidth}</span><input type="range" min="2" max="10" value={strokeWidth} onChange={event => setStrokeWidth(Number(event.target.value))}/></label>
+        <label className="annotation-width" title="Strektykkelse"><span>{strokeWidth}</span><input type="range" min="0.5" max="8" step="0.5" value={strokeWidth} onChange={event => setStrokeWidth(Number(event.target.value))}/></label>
       </div>
       <div className="annotation-toolbar-actions">
         <span className="annotation-time">{clock(editorTime)}</span>
