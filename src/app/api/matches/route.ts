@@ -18,7 +18,7 @@ function timeToSeconds(value: unknown): number | undefined {
   return undefined;
 }
 
-function normalizeClips(value: unknown) {
+function normalizeClips(value: unknown, matchId: string) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => {
     if (!item || typeof item !== "object") return item;
@@ -27,6 +27,7 @@ function normalizeClips(value: unknown) {
     const end = timeToSeconds(clip.end ?? clip.endTime ?? clip.endSeconds ?? clip.to);
     return {
       ...clip,
+      matchId,
       ...(start !== undefined ? { start } : {}),
       ...(end !== undefined ? { end } : {}),
     };
@@ -43,7 +44,7 @@ export async function GET(request: Request) {
         return {
           id: doc.id,
           ...data,
-          clips: normalizeClips(data.clips),
+          clips: normalizeClips(data.clips, doc.id),
           dateIso: typeof data.dateIso === "string" ? data.dateIso : "",
         };
       })

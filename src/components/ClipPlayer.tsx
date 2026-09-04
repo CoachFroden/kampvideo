@@ -1,7 +1,46 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Expand, ExternalLink, Minimize, Pause, Play, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowUpRight,
+  Circle,
+  Expand,
+  ExternalLink,
+  Minimize,
+  Minus,
+  Pause,
+  Pencil,
+  Play,
+  RotateCcw,
+  Save,
+  Trash2,
+  Type,
+  Undo2,
+  Volume2,
+  VolumeX,
+  X,
+} from "lucide-react";
+import { auth } from "@/lib/firebase-client";
+
+type Point = { x: number; y: number };
+type Tool = "arrow" | "line" | "circle" | "freehand" | "text";
+
+type Drawing = {
+  id: string;
+  type: Tool;
+  color: string;
+  strokeWidth: number;
+  start?: Point;
+  end?: Point;
+  points?: Point[];
+  text?: string;
+};
+
+type AnnotationFrame = {
+  id: string;
+  time: number;
+  drawings: Drawing[];
+};
 
 type Clip = {
   id: string;
@@ -10,12 +49,21 @@ type Clip = {
   category?: string;
   start?: number;
   end?: number;
+  matchId?: string;
+  annotations?: AnnotationFrame[];
 };
 
 type Props = {
   src: string;
   clip: Clip;
   onOpenFullMatch: () => void;
+};
+
+type OverlayRect = { left: number; top: number; width: number; height: number };
+
+type DragState = {
+  pointerId: number;
+  drawing: Drawing;
 };
 
 function clock(seconds: number) {
@@ -25,19 +73,114 @@ function clock(seconds: number) {
   return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
+function clamp01(value: number) {
+  return Math.min(1, Math.max(0, value));
+}
+
+function nearestFrame(frames: AnnotationFrame[], time: number, tolerance = 0.3) {
+  let best: AnnotationFrame | undefined;
+  let bestDistance = Infinity;
+  for (const frame of frames) {
+    const distance = Math.abs(frame.time - time);
+    if (distance <= tolerance && distance < bestDistance) {
+      best = frame;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function renderDrawing(drawing: Drawing) {
+  const common = {
+    stroke: drawing.color,
+    strokeWidth: Math.max(2, drawing.strokeWidth),
+    vectorEffect: "non-scaling-stroke" as const,
+    fill: "none",
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+
+  if ((drawing.type === "line" || drawing.type === "arrow") && drawing.start && drawing.end) {
+    return <line
+      key={drawing.id}
+      x1={drawing.start.x}
+      y1={drawing.start.y}
+      x2={drawing.end.x}
+      y2={drawing.end.y}
+      {...common}
+      markerEnd={drawing.type === "arrow" ? `url(#arrow-${drawing.id})` : undefined}
+    />;
+  }
+
+  if (drawing.type === "circle" && drawing.start && drawing.end) {
+    const cx = (drawing.start.x + drawing.end.x) / 2;
+    const cy = (drawing.start.y + drawing.end.y) / 2;
+    const rx = Math.abs(drawing.end.x - drawing.start.x) / 2;
+    const ry = Math.abs(drawing.end.y - drawing.start.y) / 2;
+    return <ellipse key={drawing.id} cx={cx} cy={cy} rx={rx} ry={ry} {...common}/>;
+  }
+
+  if (drawing.type === "freehand" && drawing.points && drawing.points.length > 1) {
+    const points = drawing.points.map(point => `${point.x},${point.y}`).join(" ");
+    return <polyline key={drawing.id} points={points} {...common}/>;
+  }
+
+  if (drawing.type === "text" && drawing.start && drawing.text) {
+    return <text
+      key={drawing.id}
+      x={drawing.start.x}
+      y={drawing.start.y}
+      fill={drawing.color}
+      stroke="#06100b"
+      strokeWidth="0.004"
+      paintOrder="stroke"
+      fontSize="0.045"
+      fontWeight="700"
+      fontFamily="DM Sans, sans-serif"
+    >{drawing.text}</text>;
+  }
+
+  return null;
+}
+
 export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seenFramesRef = useRef(new Set<string>());
+  const lastTimeRef = useRef(0);
+  const dragRef = useRef<DragState | null>(null);
+
   const start = Math.max(0, Number(clip.start ?? 0));
   const end = Math.max(start, Number(clip.end ?? start));
   const duration = Math.max(0, end - start);
+
   const [relativeTime, setRelativeTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [ready, setReady] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [frames, setFrames] = useState<AnnotationFrame[]>(() => Array.isArray(clip.annotations) ? clip.annotations : []);
+  const [activeFrameId, setActiveFrameId] = useState<string | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorTime, setEditorTime] = useState(0);
+  const [editingFrameId, setEditingFrameId] = useState<string | null>(null);
+  const [tool, setTool] = useState<Tool>("arrow");
+  const [color, setColor] = useState("#b8ff3d");
+  const [strokeWidth, setStrokeWidth] = useState(4);
+  const [draftDrawings, setDraftDrawings] = useState<Drawing[]>([]);
+  const [previewDrawing, setPreviewDrawing] = useState<Drawing | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [overlayRect, setOverlayRect] = useState<OverlayRect>({ left: 0, top: 0, width: 0, height: 0 });
+
+  const orderedFrames = useMemo(() => [...frames].sort((a, b) => a.time - b.time), [frames]);
+  const activeFrame = activeFrameId ? frames.find(frame => frame.id === activeFrameId) : undefined;
+  const visibleDrawings = editorOpen
+    ? [...draftDrawings, ...(previewDrawing ? [previewDrawing] : [])]
+    : activeFrame?.drawings ?? [];
 
   function clearHideTimer() {
     if (hideTimerRef.current) {
@@ -49,10 +192,33 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
   function showControls(autoHide = true) {
     setControlsVisible(true);
     clearHideTimer();
-    if (!autoHide) return;
+    if (!autoHide || editorOpen) return;
     hideTimerRef.current = setTimeout(() => {
       if (!videoRef.current?.paused) setControlsVisible(false);
     }, 5000);
+  }
+
+  function updateOverlayRect() {
+    const shell = shellRef.current;
+    const video = videoRef.current;
+    if (!shell || !video) return;
+    const shellRect = shell.getBoundingClientRect();
+    if (!shellRect.width || !shellRect.height || !video.videoWidth || !video.videoHeight) {
+      setOverlayRect({ left: 0, top: 0, width: shellRect.width, height: shellRect.height });
+      return;
+    }
+
+    const videoAspect = video.videoWidth / video.videoHeight;
+    const shellAspect = shellRect.width / shellRect.height;
+    if (shellAspect > videoAspect) {
+      const height = shellRect.height;
+      const width = height * videoAspect;
+      setOverlayRect({ left: (shellRect.width - width) / 2, top: 0, width, height });
+    } else {
+      const width = shellRect.width;
+      const height = width / videoAspect;
+      setOverlayRect({ left: 0, top: (shellRect.height - height) / 2, width, height });
+    }
   }
 
   useEffect(() => {
@@ -60,9 +226,35 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
     setPlaying(false);
     setReady(false);
     setControlsVisible(true);
+    setEditorOpen(false);
+    setActiveFrameId(null);
+    setFrames(Array.isArray(clip.annotations) ? clip.annotations : []);
+    seenFramesRef.current.clear();
+    lastTimeRef.current = 0;
     clearHideTimer();
     return clearHideTimer;
   }, [src, clip.id, start, end]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkAdmin() {
+      const user = auth.currentUser;
+      if (!user || !clip.matchId) {
+        if (!cancelled) setIsAdmin(false);
+        return;
+      }
+      try {
+        const token = await user.getIdToken();
+        const response = await fetch("/api/me", { headers: { Authorization: `Bearer ${token}` } });
+        const data = await response.json();
+        if (!cancelled) setIsAdmin(response.ok && data.role === "admin");
+      } catch {
+        if (!cancelled) setIsAdmin(false);
+      }
+    }
+    void checkAdmin();
+    return () => { cancelled = true; };
+  }, [clip.id, clip.matchId]);
 
   useEffect(() => {
     if (playing) showControls(true);
@@ -73,9 +265,17 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
   }, [playing]);
 
   useEffect(() => {
-    const syncFullscreenState = () => setIsFullscreen(document.fullscreenElement === shellRef.current);
+    const syncFullscreenState = () => {
+      setIsFullscreen(document.fullscreenElement === shellRef.current);
+      window.setTimeout(updateOverlayRect, 0);
+    };
+    const resize = () => updateOverlayRect();
     document.addEventListener("fullscreenchange", syncFullscreenState);
-    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+    window.addEventListener("resize", resize);
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreenState);
+      window.removeEventListener("resize", resize);
+    };
   }, []);
 
   function clampIntoClip(video: HTMLVideoElement) {
@@ -84,18 +284,21 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
 
   async function startPlayback() {
     const video = videoRef.current;
-    if (!video || duration <= 0) return;
+    if (!video || duration <= 0 || editorOpen) return;
     if (video.currentTime >= end - 0.08 || video.currentTime < start) {
       video.currentTime = start;
       setRelativeTime(0);
+      lastTimeRef.current = 0;
+      seenFramesRef.current.clear();
     }
+    setActiveFrameId(null);
     showControls(true);
     try { await video.play(); } catch { /* Autoplay can be blocked; user can press play. */ }
   }
 
   function togglePlayback() {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || editorOpen) return;
     showControls(true);
     if (video.paused) void startPlayback();
     else video.pause();
@@ -103,19 +306,26 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
 
   function seek(relative: number) {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || editorOpen) return;
     showControls(true);
     const bounded = Math.min(duration, Math.max(0, relative));
     video.currentTime = start + bounded;
     setRelativeTime(bounded);
+    lastTimeRef.current = bounded;
+    seenFramesRef.current.clear();
+    const frame = nearestFrame(orderedFrames, bounded);
+    setActiveFrameId(frame?.id ?? null);
   }
 
   function replay() {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || editorOpen) return;
     showControls(true);
     video.currentTime = start;
     setRelativeTime(0);
+    lastTimeRef.current = 0;
+    setActiveFrameId(null);
+    seenFramesRef.current.clear();
     void video.play().catch(() => undefined);
   }
 
@@ -146,8 +356,137 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
     iosVideo?.webkitEnterFullscreen?.();
   }
 
+  function openEditor() {
+    const video = videoRef.current;
+    if (!video || !isAdmin || !clip.matchId) return;
+    video.pause();
+    const time = Math.min(duration, Math.max(0, video.currentTime - start));
+    const existing = nearestFrame(orderedFrames, time, 0.35);
+    const frameTime = existing?.time ?? time;
+    if (existing) video.currentTime = start + frameTime;
+    setRelativeTime(frameTime);
+    lastTimeRef.current = frameTime;
+    setEditorTime(frameTime);
+    setEditingFrameId(existing?.id ?? null);
+    setDraftDrawings(existing?.drawings ? [...existing.drawings] : []);
+    setPreviewDrawing(null);
+    setActiveFrameId(existing?.id ?? null);
+    setSaveMessage("");
+    setEditorOpen(true);
+    clearHideTimer();
+    setControlsVisible(true);
+  }
+
+  function closeEditor() {
+    dragRef.current = null;
+    setPreviewDrawing(null);
+    setEditorOpen(false);
+    setSaveMessage("");
+    const frame = nearestFrame(orderedFrames, relativeTime, 0.35);
+    setActiveFrameId(frame?.id ?? null);
+  }
+
+  function pointFromEvent(event: ReactPointerEvent<SVGSVGElement>): Point {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: clamp01((event.clientX - rect.left) / rect.width),
+      y: clamp01((event.clientY - rect.top) / rect.height),
+    };
+  }
+
+  function beginDrawing(event: ReactPointerEvent<SVGSVGElement>) {
+    if (!editorOpen || saving) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const point = pointFromEvent(event);
+
+    if (tool === "text") {
+      const value = window.prompt("Skriv teksten som skal vises på bildet:")?.trim();
+      if (!value) return;
+      setDraftDrawings(current => [...current, {
+        id: crypto.randomUUID(),
+        type: "text",
+        color,
+        strokeWidth,
+        start: point,
+        text: value.slice(0, 120),
+      }]);
+      return;
+    }
+
+    const drawing: Drawing = tool === "freehand"
+      ? { id: crypto.randomUUID(), type: tool, color, strokeWidth, points: [point] }
+      : { id: crypto.randomUUID(), type: tool, color, strokeWidth, start: point, end: point };
+    dragRef.current = { pointerId: event.pointerId, drawing };
+    setPreviewDrawing(drawing);
+  }
+
+  function moveDrawing(event: ReactPointerEvent<SVGSVGElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const point = pointFromEvent(event);
+    const drawing = drag.drawing;
+    if (drawing.type === "freehand") {
+      const next = { ...drawing, points: [...(drawing.points ?? []), point] };
+      dragRef.current = { ...drag, drawing: next };
+      setPreviewDrawing(next);
+    } else {
+      const next = { ...drawing, end: point };
+      dragRef.current = { ...drag, drawing: next };
+      setPreviewDrawing(next);
+    }
+  }
+
+  function finishDrawing(event: ReactPointerEvent<SVGSVGElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* Pointer capture can already be released. */ }
+    const drawing = drag.drawing;
+    dragRef.current = null;
+    setPreviewDrawing(null);
+
+    const valid = drawing.type === "freehand"
+      ? (drawing.points?.length ?? 0) > 1
+      : !!drawing.start && !!drawing.end && (Math.abs(drawing.end.x - drawing.start.x) > 0.002 || Math.abs(drawing.end.y - drawing.start.y) > 0.002);
+    if (valid) setDraftDrawings(current => [...current, drawing]);
+  }
+
+  async function saveAnnotations() {
+    const user = auth.currentUser;
+    if (!user || !clip.matchId || saving) return;
+    setSaving(true);
+    setSaveMessage("");
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch("/api/admin/annotations", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          matchId: clip.matchId,
+          clipId: clip.id,
+          frameId: editingFrameId,
+          time: editorTime,
+          drawings: draftDrawings,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Kunne ikke lagre tegningen.");
+      const nextFrames = Array.isArray(data.annotations) ? data.annotations as AnnotationFrame[] : [];
+      setFrames(nextFrames);
+      clip.annotations = nextFrames;
+      const saved = nearestFrame(nextFrames, editorTime, 0.35);
+      setActiveFrameId(saved?.id ?? null);
+      setEditingFrameId(saved?.id ?? null);
+      setSaveMessage(draftDrawings.length ? "Lagret" : "Analysepunkt slettet");
+      setEditorOpen(false);
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "Kunne ikke lagre tegningen.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return <div
-    className={`clip-player ${controlsVisible ? "ui-visible" : "ui-hidden"}`}
+    className={`clip-player ${controlsVisible ? "ui-visible" : "ui-hidden"} ${editorOpen ? "annotation-editing" : ""}`}
     ref={shellRef}
     onMouseMove={() => showControls(true)}
     onPointerDown={() => showControls(true)}
@@ -164,11 +503,19 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
         const video = event.currentTarget;
         video.currentTime = start;
         setRelativeTime(0);
+        lastTimeRef.current = 0;
         setReady(true);
+        updateOverlayRect();
         showControls(true);
         void video.play().catch(() => undefined);
       }}
       onSeeking={event => clampIntoClip(event.currentTarget)}
+      onSeeked={event => {
+        const rel = Math.min(duration, Math.max(0, event.currentTarget.currentTime - start));
+        lastTimeRef.current = rel;
+        const frame = nearestFrame(orderedFrames, rel);
+        if (event.currentTarget.paused && !editorOpen) setActiveFrameId(frame?.id ?? null);
+      }}
       onTimeUpdate={event => {
         const video = event.currentTarget;
         if (video.currentTime < start) {
@@ -179,14 +526,75 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
           video.currentTime = end;
           video.pause();
           setRelativeTime(duration);
+          lastTimeRef.current = duration;
           return;
         }
-        setRelativeTime(Math.min(duration, Math.max(0, video.currentTime - start)));
+
+        const nextRelative = Math.min(duration, Math.max(0, video.currentTime - start));
+        const previous = lastTimeRef.current;
+        setRelativeTime(nextRelative);
+
+        if (!editorOpen && !video.paused && nextRelative >= previous) {
+          const frame = orderedFrames.find(item =>
+            !seenFramesRef.current.has(item.id) && item.time >= previous - 0.01 && item.time <= nextRelative + 0.08
+          );
+          if (frame) {
+            seenFramesRef.current.add(frame.id);
+            video.currentTime = start + frame.time;
+            video.pause();
+            setRelativeTime(frame.time);
+            lastTimeRef.current = frame.time;
+            setActiveFrameId(frame.id);
+            return;
+          }
+        }
+        lastTimeRef.current = nextRelative;
       }}
-      onPlay={() => setPlaying(true)}
-      onPause={() => setPlaying(false)}
+      onPlay={() => {
+        setPlaying(true);
+        if (!editorOpen) setActiveFrameId(null);
+      }}
+      onPause={event => {
+        setPlaying(false);
+        if (!editorOpen) {
+          const rel = Math.min(duration, Math.max(0, event.currentTarget.currentTime - start));
+          const frame = nearestFrame(orderedFrames, rel);
+          if (frame) setActiveFrameId(frame.id);
+        }
+      }}
       onClick={togglePlayback}
     />
+
+    <div
+      className={`annotation-stage ${editorOpen ? "editing" : ""}`}
+      style={{ left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height }}
+    >
+      <svg
+        className="annotation-svg"
+        viewBox="0 0 1 1"
+        preserveAspectRatio="none"
+        onPointerDown={beginDrawing}
+        onPointerMove={moveDrawing}
+        onPointerUp={finishDrawing}
+        onPointerCancel={finishDrawing}
+      >
+        <defs>
+          {visibleDrawings.filter(drawing => drawing.type === "arrow").map(drawing => <marker
+            key={`marker-${drawing.id}`}
+            id={`arrow-${drawing.id}`}
+            markerWidth="10"
+            markerHeight="10"
+            refX="8"
+            refY="5"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" fill={drawing.color}/>
+          </marker>)}
+        </defs>
+        {visibleDrawings.map(renderDrawing)}
+      </svg>
+    </div>
 
     <div className="clip-mode-badge">
       <span>{clip.category ?? "KLIPP"}</span>
@@ -195,6 +603,35 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
     </div>
 
     {!ready && <div className="clip-loading">Laster klippet …</div>}
+
+    {activeFrame && !editorOpen && <button type="button" className="annotation-pause-badge" onClick={() => void startPlayback()}>
+      <span>ANALYSEPUNKT</span><b>Trykk for å fortsette</b><Play fill="currentColor"/>
+    </button>}
+
+    {isAdmin && clip.matchId && !editorOpen && <button type="button" className="annotation-open-button" onClick={openEditor}>
+      <Pencil/> Tegn på bildet
+    </button>}
+
+    {editorOpen && <div className="annotation-toolbar" onPointerDown={event => event.stopPropagation()}>
+      <div className="annotation-toolbar-main">
+        <button type="button" className={tool === "arrow" ? "active" : ""} onClick={() => setTool("arrow")} title="Pil"><ArrowUpRight/><span>Pil</span></button>
+        <button type="button" className={tool === "line" ? "active" : ""} onClick={() => setTool("line")} title="Linje"><Minus/><span>Linje</span></button>
+        <button type="button" className={tool === "circle" ? "active" : ""} onClick={() => setTool("circle")} title="Sirkel"><Circle/><span>Sirkel</span></button>
+        <button type="button" className={tool === "freehand" ? "active" : ""} onClick={() => setTool("freehand")} title="Frihånd"><Pencil/><span>Frihånd</span></button>
+        <button type="button" className={tool === "text" ? "active" : ""} onClick={() => setTool("text")} title="Tekst"><Type/><span>Tekst</span></button>
+        <label className="annotation-color" title="Farge"><input type="color" value={color} onChange={event => setColor(event.target.value)}/></label>
+        <label className="annotation-width" title="Strektykkelse"><span>{strokeWidth}</span><input type="range" min="2" max="10" value={strokeWidth} onChange={event => setStrokeWidth(Number(event.target.value))}/></label>
+      </div>
+      <div className="annotation-toolbar-actions">
+        <span className="annotation-time">{clock(editorTime)}</span>
+        <button type="button" onClick={() => setDraftDrawings(current => current.slice(0, -1))} disabled={!draftDrawings.length} title="Angre"><Undo2/></button>
+        <button type="button" onClick={() => setDraftDrawings([])} disabled={!draftDrawings.length} title="Fjern alt"><Trash2/></button>
+        <button type="button" className="save" onClick={() => void saveAnnotations()} disabled={saving}><Save/><span>{saving ? "Lagrer …" : draftDrawings.length ? "Lagre" : editingFrameId ? "Slett punkt" : "Lagre"}</span></button>
+        <button type="button" onClick={closeEditor} title="Avbryt"><X/></button>
+      </div>
+    </div>}
+
+    {saveMessage && !editorOpen && <div className="annotation-save-message">{saveMessage}</div>}
 
     <div className="clip-controls" onClick={event => { event.stopPropagation(); showControls(true); }}>
       <button type="button" className="clip-control-button main" onClick={togglePlayback} aria-label={playing ? "Pause" : "Spill av"}>
@@ -211,10 +648,11 @@ export default function ClipPlayer({ src, clip, onOpenFullMatch }: Props) {
         value={Math.min(relativeTime, Math.max(duration, 0.1))}
         onChange={event => seek(Number(event.target.value))}
         aria-label="Spol i klippet"
+        disabled={editorOpen}
       />
       <span className="clip-clock end">{clock(duration)}</span>
 
-      <button type="button" className="clip-control-button" onClick={replay} aria-label="Spill klippet på nytt"><RotateCcw/></button>
+      <button type="button" className="clip-control-button" onClick={replay} aria-label="Spill klippet på nytt" disabled={editorOpen}><RotateCcw/></button>
       <button type="button" className="clip-control-button" onClick={toggleMute} aria-label={muted ? "Slå på lyd" : "Demp lyd"}>{muted ? <VolumeX/> : <Volume2/>}</button>
       <button type="button" className="clip-control-button" onClick={() => void toggleFullscreen()} aria-label={isFullscreen ? "Avslutt fullskjerm" : "Fullskjerm"}>{isFullscreen ? <Minimize/> : <Expand/>}</button>
     </div>
