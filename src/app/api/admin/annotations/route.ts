@@ -48,7 +48,7 @@ function drawing(value: unknown): Drawing | null {
   const id = text(raw.id, 80) || crypto.randomUUID();
   const requestedColor = text(raw.color, 7);
   const color = /^#[0-9a-f]{6}$/i.test(requestedColor) ? requestedColor : "#b8ff3d";
-  const strokeWidth = number(raw.strokeWidth, 2, 10) ?? 4;
+  const strokeWidth = number(raw.strokeWidth, 0.5, 8) ?? 1.5;
 
   if (type === "freehand") {
     if (!Array.isArray(raw.points)) return null;
