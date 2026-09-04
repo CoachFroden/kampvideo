@@ -6,7 +6,7 @@ import { User, onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/lib/firebase-client";
 import { ArrowLeft, CalendarDays, Check, CircleUserRound, Clock3, Film, FolderOpen, Goal, LoaderCircle, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, UploadCloud, Users, Video, X } from "lucide-react";
 
-type Clip = { id: string; title: string; category: string; start: number; end: number; minute: string; good?: string; improve?: string };
+type Clip = { id: string; title: string; category: string; start: number; end: number; minute: string; good?: string; improve?: string; videoKey?: string };
 type Match = { id: string; opponent: string; date: string; venue?: string; competition?: string; homeScore: number; awayScore: number; isHome?: boolean; videoKey: string; clips?: Clip[] };
 type ManagedUser = { id: string; email: string; name: string; approved: boolean; role: "viewer" | "admin"; createdAt?: string | null };
 type VideoFile = { key: string; size: number; modified?: string | null };
@@ -119,6 +119,26 @@ async function uploadVideoToR2(
   }
 }
 
+function readVideoDuration(file: File) {
+  return new Promise<number>((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    const cleanup = () => URL.revokeObjectURL(url);
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      const duration = video.duration;
+      cleanup();
+      if (Number.isFinite(duration) && duration > 0) resolve(duration);
+      else reject(new Error("Kunne ikke lese lengden på videoklippet."));
+    };
+    video.onerror = () => {
+      cleanup();
+      reject(new Error("Kunne ikke lese videoklippet. Prøv MP4-format."));
+    };
+    video.src = url;
+  });
+}
+
 export default function AdminPage() {
   const [user, setUser] = useState<User | null>(null);
   const [data, setData] = useState<AdminData>(emptyData);
@@ -185,7 +205,7 @@ export default function AdminPage() {
     {notice && <div className="admin-alert success"><Check/> {notice}</div>}
     {loading ? <div className="admin-loading"><LoaderCircle/> Henter kontrollsenteret …</div> : <>
       {tab === "matches" && <MatchesPanel data={data} user={user} saving={saving} mutate={mutate}/>} 
-      {tab === "clips" && <ClipsPanel matches={data.matches} saving={saving} mutate={mutate}/>} 
+      {tab === "clips" && <ClipsPanel matches={data.matches} user={user} saving={saving} mutate={mutate}/>} 
       {tab === "users" && <UsersPanel users={data.users} saving={saving} mutate={mutate}/>} 
     </>}
   </main>;
@@ -287,44 +307,152 @@ function MatchesPanel({ data, user, saving, mutate }: { data: AdminData; user: U
   </section>;
 }
 
-function ClipsPanel({ matches, saving, mutate }: { matches: Match[]; saving: boolean; mutate: (init: RequestInit, success: string, path?: string) => Promise<boolean> }) {
+function ClipsPanel({ matches, user, saving, mutate }: { matches: Match[]; user: User | null; saving: boolean; mutate: (init: RequestInit, success: string, path?: string) => Promise<boolean> }) {
   const [matchId, setMatchId] = useState(matches[0]?.id ?? "");
-  const [title, setTitle] = useState(""); const [category, setCategory] = useState("Analyse"); const [start, setStart] = useState(""); const [end, setEnd] = useState("");
-  const [good, setGood] = useState(""); const [improve, setImprove] = useState(""); const [editingClipId, setEditingClipId] = useState("");
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("Analyse");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [good, setGood] = useState("");
+  const [improve, setImprove] = useState("");
+  const [editingClipId, setEditingClipId] = useState("");
+  const [uploadMode, setUploadMode] = useState(false);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [clipVideoKey, setClipVideoKey] = useState("");
+  const [clipDuration, setClipDuration] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadedBytes, setUploadedBytes] = useState(0);
+  const [uploadError, setUploadError] = useState("");
+  const abortRef = useRef<AbortController | null>(null);
   const selected = matches.find((item) => item.id === matchId) ?? matches[0];
+
   useEffect(() => { if (!matchId && matches[0]) setMatchId(matches[0].id); }, [matchId, matches]);
-  function resetClip() { setEditingClipId(""); setTitle(""); setCategory("Analyse"); setStart(""); setEnd(""); setGood(""); setImprove(""); }
-  function editClip(clip: Clip) { setEditingClipId(clip.id); setTitle(clip.title); setCategory(clip.category); setStart(formatClock(clip.start)); setEnd(formatClock(clip.end)); setGood(clip.good ?? ""); setImprove(clip.improve ?? ""); window.scrollTo({ top: 300, behavior: "smooth" }); }
+
+  function resetClip() {
+    setEditingClipId(""); setTitle(""); setCategory("Analyse"); setStart(""); setEnd(""); setGood(""); setImprove("");
+    setUploadMode(false); setVideoFile(null); setClipVideoKey(""); setClipDuration(0); setUploadProgress(0); setUploadedBytes(0); setUploadError("");
+  }
+
+  function editClip(clip: Clip) {
+    const standalone = !!clip.videoKey;
+    setEditingClipId(clip.id); setTitle(clip.title); setCategory(clip.category); setStart(formatClock(clip.start)); setEnd(formatClock(clip.end));
+    setGood(clip.good ?? ""); setImprove(clip.improve ?? ""); setUploadMode(standalone); setVideoFile(null); setClipVideoKey(clip.videoKey ?? "");
+    setClipDuration(standalone ? Math.max(0, clip.end - clip.start) : 0); setUploadProgress(0); setUploadedBytes(0); setUploadError("");
+    window.scrollTo({ top: 300, behavior: "smooth" });
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const ok = await mutate({ method: editingClipId ? "PATCH" : "POST", body: JSON.stringify({ action: editingClipId ? "updateClip" : "createClip", matchId, clipId: editingClipId, clip: { title, category, start: toSeconds(start), end: toSeconds(end), good, improve } }) }, editingClipId ? "Klippet ble oppdatert" : "Klippet ble lagt til");
+    if (!user || !selected) return;
+    setUploadError("");
+
+    let videoKey = uploadMode ? clipVideoKey : "";
+    let startSeconds = uploadMode ? 0 : toSeconds(start);
+    let endSeconds = uploadMode ? clipDuration : toSeconds(end);
+
+    if (uploadMode && videoFile) {
+      let duration = clipDuration;
+      try {
+        if (!(Number.isFinite(duration) && duration > 0)) duration = await readVideoDuration(videoFile);
+      } catch (error) {
+        setUploadError(error instanceof Error ? error.message : "Kunne ikke lese videoklippet.");
+        return;
+      }
+
+      setUploading(true); setUploadProgress(0); setUploadedBytes(0);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      try {
+        videoKey = await uploadVideoToR2(user, videoFile, selected.date, `${selected.opponent}-klipp`, controller.signal, (percent, uploaded) => {
+          setUploadProgress(percent); setUploadedBytes(uploaded);
+        });
+        setClipVideoKey(videoKey);
+        setClipDuration(duration);
+        setVideoFile(null);
+        startSeconds = 0;
+        endSeconds = duration;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") setUploadError("Opplastingen ble avbrutt.");
+        else setUploadError(error instanceof Error ? error.message : "Videoopplastingen feilet");
+        return;
+      } finally {
+        abortRef.current = null; setUploading(false);
+      }
+    }
+
+    if (uploadMode && !videoKey) {
+      setUploadError("Velg videoklippet du lastet ned fra Veo.");
+      return;
+    }
+    if (uploadMode && !(Number.isFinite(endSeconds) && endSeconds > 0)) {
+      setUploadError("Kunne ikke lese lengden på videoklippet.");
+      return;
+    }
+
+    const ok = await mutate({
+      method: editingClipId ? "PATCH" : "POST",
+      body: JSON.stringify({
+        action: editingClipId ? "updateClip" : "createClip",
+        matchId,
+        clipId: editingClipId,
+        clip: { title, category, start: startSeconds, end: endSeconds, good, improve, videoKey },
+      }),
+    }, editingClipId ? "Klippet ble oppdatert" : uploadMode ? "Videoklippet ble lastet opp og lagt til" : "Klippet ble lagt til");
     if (ok) resetClip();
   }
+
   return <section className="admin-grid">
     <form className="admin-card admin-form" onSubmit={submit}>
-      <div className="admin-card-head"><span className="admin-icon blue">{editingClipId ? <Pencil/> : <Clock3/>}</span><div><small>{editingClipId ? "REDIGERER" : "NYTT KLIPP"}</small><h2>{editingClipId ? "Rediger klipp" : "Marker situasjon"}</h2></div></div>
+      <div className="admin-card-head"><span className="admin-icon blue">{editingClipId ? <Pencil/> : uploadMode ? <UploadCloud/> : <Clock3/>}</span><div><small>{editingClipId ? "REDIGERER" : "NYTT KLIPP"}</small><h2>{editingClipId ? "Rediger klipp" : uploadMode ? "Last opp videoklipp" : "Marker situasjon"}</h2></div></div>
       <div className="form-grid">
         <label className="wide">Kamp<select value={matchId} onChange={(e) => setMatchId(e.target.value)} required><option value="">Velg kamp …</option>{matches.map((match) => <option key={match.id} value={match.id}>{match.date} · Samnanger – {match.opponent}</option>)}</select></label>
+        <label className="toggle wide"><input type="checkbox" checked={uploadMode} disabled={uploading} onChange={(e) => { setUploadMode(e.target.checked); setUploadError(""); }}/><span/> Bruk eget videoklipp, for eksempel et Directed Clip fra Veo</label>
         <label className="wide">Tittel<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Gjenvinning og gjennombrudd" required/></label>
         <label>Kategori<select value={category} onChange={(e) => setCategory(e.target.value)}><option>Analyse</option><option>Angrep</option><option>Forsvar</option><option>Press</option><option>Overgang</option><option>Mål</option><option>Sjanse</option><option>Dødball</option></select></label>
-        <label>Starttid<input value={start} onChange={(e) => setStart(e.target.value)} placeholder="35:18" inputMode="numeric" required/></label>
-        <label>Sluttid<input value={end} onChange={(e) => setEnd(e.target.value)} placeholder="35:42" inputMode="numeric" required/></label>
+
+        {!uploadMode && <>
+          <label>Starttid<input value={start} onChange={(e) => setStart(e.target.value)} placeholder="35:18" inputMode="numeric" required/></label>
+          <label>Sluttid<input value={end} onChange={(e) => setEnd(e.target.value)} placeholder="35:42" inputMode="numeric" required/></label>
+        </>}
+
+        {uploadMode && <div className="wide upload-zone">
+          <div className="upload-zone-title"><Video/><span><b>Videoklipp fra Veo</b><small>Velg klippet du har lastet ned. Lengden blir lest automatisk, og filen lagres privat i R2.</small></span></div>
+          <label className="upload-picker">
+            <input type="file" accept="video/mp4,video/quicktime,video/x-m4v,video/webm,.mp4,.mov,.m4v,.webm" disabled={uploading || saving} onChange={async (e) => {
+              const chosen = e.target.files?.[0] ?? null;
+              setVideoFile(chosen); setClipVideoKey(""); setClipDuration(0); setUploadError(""); setUploadProgress(0); setUploadedBytes(0);
+              if (!chosen) return;
+              try { setClipDuration(await readVideoDuration(chosen)); }
+              catch (error) { setUploadError(error instanceof Error ? error.message : "Kunne ikke lese videoklippet."); }
+            }}/>
+            <UploadCloud/><span>{videoFile ? <><b>{videoFile.name}</b><small>{formatBytes(videoFile.size)}{clipDuration > 0 ? ` · ${formatClock(clipDuration)}` : ""}</small></> : clipVideoKey ? <><b>Videoklipp er koblet til</b><small>{clipVideoKey}{clipDuration > 0 ? ` · ${formatClock(clipDuration)}` : ""}</small></> : <><b>Velg videoklipp fra PC</b><small>MP4, MOV, M4V eller WebM</small></>}</span>
+          </label>
+          {uploading && <div className="upload-progress-wrap">
+            <div className="upload-progress-head"><span>Laster videoklippet direkte til privat R2 …</span><b>{uploadProgress}%</b></div>
+            <div className="upload-progress"><span style={{ width: `${uploadProgress}%` }}/></div>
+            <small>{formatBytes(uploadedBytes)} av {videoFile ? formatBytes(videoFile.size) : ""}</small>
+            <button type="button" className="upload-cancel" onClick={() => abortRef.current?.abort()}><X/> Avbryt opplasting</button>
+          </div>}
+        </div>}
+
         <label className="wide">Dette er bra<textarea value={good} onChange={(e) => setGood(e.target.value)} placeholder="Hva gjør laget eller spilleren godt i situasjonen?" rows={3}/></label>
         <label className="wide">Dette bør forbedres<textarea value={improve} onChange={(e) => setImprove(e.target.value)} placeholder="Hva bør gjøres annerledes eller trenes mer på?" rows={3}/></label>
       </div>
-      <p className="form-help">Bruk tidspunktet som vises i videospilleren, for eksempel 35:18.</p>
-      <button className="admin-primary" disabled={saving || !matches.length}>{saving ? <LoaderCircle/> : editingClipId ? <Check/> : <Plus/>} {editingClipId ? "Lagre endringer" : "Lag klipp"}</button>
+      {uploadError && <div className="upload-inline-error">{uploadError}</div>}
+      <p className="form-help">{uploadMode ? "Et eget videoklipp spilles som en selvstendig video. Etter at det er lagt til kan du åpne det i kamprommet og tegne piler, linjer, sirkler og tekst på analysepunkter." : "Bruk tidspunktet som vises i videospilleren, for eksempel 35:18."}</p>
+      <button className="admin-primary" disabled={saving || uploading || !matches.length}>{saving || uploading ? <LoaderCircle/> : editingClipId ? <Check/> : uploadMode ? <UploadCloud/> : <Plus/>} {uploading ? `Laster opp klipp · ${uploadProgress}%` : saving ? "Lagrer …" : editingClipId ? "Lagre endringer" : uploadMode ? "Last opp og legg til klipp" : "Lag klipp"}</button>
       {editingClipId && <button type="button" className="admin-cancel" onClick={resetClip}><X/> Avbryt redigering</button>}
     </form>
     <div className="admin-card list-card">
-      <div className="admin-card-head"><span className="admin-icon violet"><Video/></span><div><small>{selected?.opponent?.toUpperCase() ?? "KAMP"}</small><h2>Tidskodede klipp</h2></div></div>
-      <div className="admin-list">{!selected?.clips?.length ? <p className="admin-empty">Ingen klipp i denne kampen ennå.</p> : selected.clips.map((clip) => <article key={clip.id} className="clip-row"><span className="time-badge">{clip.minute}</span><div className="row-main"><small>{clip.category}</small><b>{clip.title}</b><span>{formatClock(clip.start)}–{formatClock(clip.end)}</span>{clip.good && <p className="clip-note good"><b>Bra:</b> {clip.good}</p>}{clip.improve && <p className="clip-note improve"><b>Forbedre:</b> {clip.improve}</p>}</div><div className="row-actions"><button type="button" className="icon-edit" title="Rediger klipp" disabled={saving} onClick={() => editClip(clip)}><Pencil/></button><button type="button" className="icon-danger" title="Slett klipp" disabled={saving} onClick={() => confirm(`Slette klippet «${clip.title}»?`) && mutate({ method: "DELETE" }, "Klippet ble slettet", `/api/admin?matchId=${encodeURIComponent(selected.id)}&clipId=${encodeURIComponent(clip.id)}`)}><Trash2/></button></div></article>)}</div>
+      <div className="admin-card-head"><span className="admin-icon violet"><Video/></span><div><small>{selected?.opponent?.toUpperCase() ?? "KAMP"}</small><h2>Klipp fra kampen</h2></div></div>
+      <div className="admin-list">{!selected?.clips?.length ? <p className="admin-empty">Ingen klipp i denne kampen ennå.</p> : selected.clips.map((clip) => <article key={clip.id} className="clip-row"><span className="time-badge">{clip.videoKey ? "VIDEO" : clip.minute}</span><div className="row-main"><small>{clip.category}{clip.videoKey ? " · EGEN VIDEOFIL" : ""}</small><b>{clip.title}</b><span>{clip.videoKey ? `${formatClock(Math.max(0, clip.end - clip.start))} langt` : `${formatClock(clip.start)}–${formatClock(clip.end)}`}</span>{clip.good && <p className="clip-note good"><b>Bra:</b> {clip.good}</p>}{clip.improve && <p className="clip-note improve"><b>Forbedre:</b> {clip.improve}</p>}</div><div className="row-actions"><button type="button" className="icon-edit" title="Rediger klipp" disabled={saving || uploading} onClick={() => editClip(clip)}><Pencil/></button><button type="button" className="icon-danger" title="Slett klipp" disabled={saving || uploading} onClick={() => confirm(`Slette klippet «${clip.title}»?`) && mutate({ method: "DELETE" }, "Klippet ble slettet", `/api/admin?matchId=${encodeURIComponent(selected.id)}&clipId=${encodeURIComponent(clip.id)}`)}><Trash2/></button></div></article>)}</div>
     </div>
   </section>;
 }
 
 function UsersPanel({ users, saving, mutate }: { users: ManagedUser[]; saving: boolean; mutate: (init: RequestInit, success: string, path?: string) => Promise<boolean> }) {
-  return <section className="admin-card users-card"><div className="admin-card-head"><span className="admin-icon lime"><Users/></span><div><small>TILGANG</small><h2>Brukere og godkjenning</h2></div></div><div className="user-list">{users.map((item) => <article key={item.id} className="user-row"><span className={`user-avatar ${item.approved ? "approved" : ""}`}>{(item.name || item.email || "?")[0].toUpperCase()}</span><div className="row-main"><b>{item.name || "Uten navn"}</b><span>{item.email}</span><small>{item.approved ? item.role === "admin" ? "Administrator" : "Godkjent bruker" : "Venter på godkjenning"}</small></div><label className="role-select"><span>Rolle</span><select value={item.role} disabled={!item.approved || saving} onChange={(e) => mutate({ method: "PATCH", body: JSON.stringify({ action: "updateUser", userId: item.id, approved: true, role: e.target.value }) }, "Rollen ble oppdatert")}><option value="viewer">Bruker</option><option value="admin">Administrator</option></select></label><button className={item.approved ? "access-button revoke" : "access-button approve"} disabled={saving} onClick={() => mutate({ method: "PATCH", body: JSON.stringify({ action: "updateUser", userId: item.id, approved: !item.approved, role: item.approved ? "viewer" : item.role }) }, item.approved ? "Tilgangen ble fjernet" : "Brukeren ble godkjent")}>{item.approved ? "Fjern tilgang" : <><Check/> Godkjenn</>}</button></article>)}</div></section>;
+  return <section className="admin-card users-card"><div className="admin-card-head"><span className="admin-icon lime"><Users/></span><div><small>TILGANG</small><h2>Brukere og godkjenning</h2></div></div><div className="user-list">{users.map((item) => <article key={item.id} className="user-row"><span className={`user-avatar ${item.approved ? "approved" : ""}`}>{(item.name || item.email || "?")[0].toUpperCase()}</span><div className="row-main"><b>{item.name || "Uten navn"}</b><span>{item.email}</span><small>{item.approved ? item.role === "admin" ? "Administrator" : "Godkjent bruker" : "Venter på godkjenning"}</small></div><label className="role-select"><span>Rolle</span><select value={item.role} disabled={!item.approved || saving} onChange={(e) => mutate({ method: "PATCH", body: JSON.stringify({ action: "updateUser", userId: item.id, approved: true, role: e.target.value }) }, "Rollen ble oppdatert")}><option value="viewer">Bruker</option><option value="admin">Administrator</option></select></label><button className={item.approved ? "access-button revoke" : "access-button approve"} disabled={saving} onClick={() => mutate({ method: "PATCH", body: JSON.stringify({ action: "updateUser", userId: item.id, approved: !item.approved, role: item.approved ? "viewer" : item.role }) }, item.approved ? "Tilgangen ble fjernet" : <><Check/> Godkjenn</>) as never}>{item.approved ? "Fjern tilgang" : <><Check/> Godkjenn</>}</button></article>)}</div></section>;
 }
 
 function toSeconds(value: string) {
@@ -335,5 +463,5 @@ function toSeconds(value: string) {
   if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   return Number.NaN;
 }
-const formatClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+const formatClock = (seconds: number) => { const safe = Math.max(0, Math.floor(seconds)); return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`; };
 const formatBytes = (bytes: number) => bytes >= 1_000_000_000 ? `${(bytes / 1_000_000_000).toFixed(2)} GB` : `${Math.round(bytes / 1_000_000)} MB`;
