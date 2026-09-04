@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./archive.css";
 import "./clip-player.css";
+import "./clip-player-overrides.css";
 import "./admin.css";
 import "./admin-upload.css";
 
