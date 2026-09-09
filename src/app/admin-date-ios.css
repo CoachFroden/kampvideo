@@ -1,0 +1,16 @@
+/* Final iPhone date-field alignment fix. Keeps the native iOS picker, but gives WebKit's internal date control a tiny safety inset so the right border/calendar area is never clipped. */
+@media (max-width: 620px) {
+  .form-grid input[type="date"] {
+    width: calc(100% - 4px) !important;
+    max-width: calc(100% - 4px) !important;
+    inline-size: calc(100% - 4px) !important;
+    margin-left: 2px;
+    margin-right: 2px;
+  }
+
+  .form-grid input[type="date"]::-webkit-calendar-picker-indicator {
+    flex: 0 0 auto;
+    position: relative;
+    right: 2px;
+  }
+}
