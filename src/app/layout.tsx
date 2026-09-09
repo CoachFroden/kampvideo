@@ -5,6 +5,7 @@ import "./clip-player.css";
 import "./clip-player-overrides.css";
 import "./admin.css";
 import "./admin-upload.css";
+import "./admin-mobile.css";
 
 export const metadata: Metadata = {
   title: {
