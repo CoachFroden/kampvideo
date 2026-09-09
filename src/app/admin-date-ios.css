@@ -1,16 +1,53 @@
-/* Final iPhone date-field alignment fix. Keeps the native iOS picker, but gives WebKit's internal date control a tiny safety inset so the right border/calendar area is never clipped. */
+/* iPhone/Safari date-field fix.
+   WebKit paints the native date control slightly outside its CSS box, which was
+   being clipped by the mobile form label. Keep the native date picker behavior,
+   but draw the visible control with our own box instead. */
 @media (max-width: 620px) {
+  .form-grid label:has(input[type="date"]) {
+    overflow: visible !important;
+    min-width: 0;
+    padding-right: 1px;
+  }
+
   .form-grid input[type="date"] {
-    width: calc(100% - 4px) !important;
-    max-width: calc(100% - 4px) !important;
-    inline-size: calc(100% - 4px) !important;
-    margin-left: 2px;
-    margin-right: 2px;
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    box-sizing: border-box;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    inline-size: 100% !important;
+    margin-left: 0;
+    margin-right: 0;
+    height: 46px;
+    padding: 10px 38px 10px 12px;
+    border: 1px solid #294132;
+    border-radius: 10px;
+    background: #07130d;
+    color: var(--text);
+    -webkit-text-fill-color: var(--text);
+    font-size: 16px;
+    line-height: 24px;
+  }
+
+  .form-grid input[type="date"]:focus {
+    border-color: #7eb337;
+    outline: none;
+  }
+
+  .form-grid input[type="date"]::-webkit-date-and-time-value {
+    min-width: 0;
+    text-align: left;
   }
 
   .form-grid input[type="date"]::-webkit-calendar-picker-indicator {
-    flex: 0 0 auto;
-    position: relative;
-    right: 2px;
+    position: absolute;
+    right: 12px;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    padding: 0;
+    opacity: .85;
   }
 }
