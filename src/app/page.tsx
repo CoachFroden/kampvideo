@@ -44,6 +44,8 @@ export default function Home() {
   const [showMatches, setShowMatches] = useState(false);
   const [archiveQuery, setArchiveQuery] = useState("");
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("all");
+  const [resumeTime, setResumeTime] = useState(0);
+  const [matchDuration, setMatchDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => onAuthStateChanged(auth, async current => {
@@ -76,12 +78,24 @@ export default function Home() {
     setSelected(match);
     setVideoUrl("");
     setActiveClip(null);
+    setResumeTime(0);
+    setMatchDuration(0);
     setShowMatches(false);
     window.setTimeout(() => document.getElementById("selected-match")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   }
 
   async function play(match: Match, clip?: Clip, fullMatchStart?: number) {
     if (!user) return;
+
+    if (clip && !activeClip && selected?.id === match.id && videoRef.current) {
+      const position = Number.isFinite(videoRef.current.currentTime) ? videoRef.current.currentTime : 0;
+      const duration = Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0;
+      setResumeTime(position);
+      if (duration > 0) setMatchDuration(duration);
+    }
+    if (!clip && typeof fullMatchStart !== "number") setResumeTime(0);
+    if (!clip && typeof fullMatchStart === "number") setResumeTime(Math.max(0, fullMatchStart));
+
     setSelected(match); setVideoUrl(""); setActiveClip(clip ?? null); setShowMatches(false);
     const response = await api(user, "/api/video-url", { method: "POST", body: JSON.stringify({ matchId: match.id, clipId: clip?.id }) });
     const data = await response.json();
@@ -182,12 +196,12 @@ export default function Home() {
       {selected && <>
         <section className="featured" id="selected-match">
           <div className="video-wrap">
-            {videoUrl ? hasBoundedClip ? <ClipPlayer src={videoUrl} clip={activeClip!} onOpenFullMatch={() => void play(selected, undefined, activeClip?.start)}/> : <video ref={videoRef} src={videoUrl} controls autoPlay playsInline controlsList="nodownload" onContextMenu={e => e.preventDefault()}/> : <button className="poster" onClick={() => void play(selected)}><span className="big-play"><Play fill="currentColor"/></span><small>SE HELE KAMPEN</small></button>}
+            {videoUrl ? hasBoundedClip ? <ClipPlayer src={videoUrl} clip={activeClip!} onOpenFullMatch={() => void play(selected, undefined, resumeTime)}/> : <video ref={videoRef} src={videoUrl} controls autoPlay playsInline controlsList="nodownload" onContextMenu={e => e.preventDefault()} onLoadedMetadata={e => { const duration = e.currentTarget.duration; if (Number.isFinite(duration) && duration > 0) setMatchDuration(duration); }}/> : <button className="poster" onClick={() => void play(selected)}><span className="big-play"><Play fill="currentColor"/></span><small>SE HELE KAMPEN</small></button>}
             <div className="score"><span>SAM</span><b>{selected.homeScore ?? "–"}<i>:</i>{selected.awayScore ?? "–"}</b><span>{selected.opponent?.slice(0,3).toUpperCase()}</span></div>
           </div>
-          <div className="match-info"><span className="pill">{activeClip ? "Trenerklipp" : selected.competition ?? "Seriekamp"}</span><h3>{activeClip ? activeClip.title : <>Samnanger <em>mot</em><br/>{selected.opponent}</>}</h3>{activeClip ? <><p><Clock3/> {activeClip.minute || `${Math.round(activeClip.start ?? 0)}–${Math.round(activeClip.end ?? 0)} sek`}</p><p><Film/> Klippet stopper automatisk ved sluttiden</p></> : <><p><CalendarDays/> {selected.date || "Dato ikke satt"}</p><p><Users/> {selected.venue ?? "Arena ikke satt"}</p></>}<button className="primary" onClick={() => void play(selected)}><Play fill="currentColor"/> Spill av hele kampen</button></div>
+          <div className="match-info"><span className="pill">{activeClip ? "Trenerklipp" : selected.competition ?? "Seriekamp"}</span><h3>{activeClip ? activeClip.title : <>Samnanger <em>mot</em><br/>{selected.opponent}</>}</h3>{activeClip ? <><p><Clock3/> {activeClip.minute || `${Math.round(activeClip.start ?? 0)}–${Math.round(activeClip.end ?? 0)} sek`}</p><p><Film/> Klippet stopper automatisk ved sluttiden</p></> : <><p><CalendarDays/> {selected.date || "Dato ikke satt"}</p><p><Users/> {selected.venue ?? "Arena ikke satt"}</p></>}<button className="primary" onClick={() => void play(selected, undefined, activeClip ? resumeTime : undefined)}><Play fill="currentColor"/> Spill av hele kampen</button></div>
         </section>
-        {videoUrl && !hasBoundedClip && <MatchTimelineControls key={selected.id} videoRef={videoRef} clips={selected.clips ?? []} onOpenClip={(clip) => void play(selected, clip)}/>} 
+        {videoUrl && <MatchTimelineControls key={`${selected.id}-${hasBoundedClip ? "clip" : "match"}`} videoRef={hasBoundedClip ? undefined : videoRef} clips={selected.clips ?? []} durationOverride={matchDuration} currentOverride={hasBoundedClip ? activeClip?.start : undefined} activeClipId={activeClip?.id ?? null} onOpenClip={(clip) => void play(selected, clip)}/>} 
         {role === "admin" && user && videoUrl && !hasBoundedClip && <AdminClipCreator user={user} matchId={selected.id} opponent={selected.opponent} videoRef={videoRef} onCreated={handleClipCreated}/>} 
       </>}
       <section className="section-head clips-title"><div><span>NØKKELSITUASJONER</span><h2>Klipp fra kampen</h2></div></section>
