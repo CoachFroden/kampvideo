@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { GoogleAuthProvider, User, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase-client";
 import ClipPlayer from "@/components/ClipPlayer";
+import AdminClipCreator, { type CreatedClip } from "@/components/AdminClipCreator";
 import { ArrowRight, CalendarDays, ChevronRight, CirclePlay, Clock3, Film, Goal, LockKeyhole, LogOut, MapPin, Play, Search, Settings, ShieldCheck, Sparkles, Trophy, Users, X } from "lucide-react";
 
 type Clip = { id: string; title: string; minute?: string; category?: string; start?: number; end?: number; good?: string; improve?: string };
@@ -42,6 +43,7 @@ export default function Home() {
   const [showMatches, setShowMatches] = useState(false);
   const [archiveQuery, setArchiveQuery] = useState("");
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("all");
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => onAuthStateChanged(auth, async current => {
     setUser(current); setVideoUrl(""); setActiveClip(null);
@@ -86,6 +88,11 @@ export default function Home() {
     const startFragment = !clip && typeof fullMatchStart === "number" && fullMatchStart > 0 ? `#t=${fullMatchStart}` : "";
     setVideoUrl(`${data.url}${startFragment}`);
     if (clip) window.setTimeout(() => document.getElementById("selected-match")?.scrollIntoView({ behavior: "smooth", block: "center" }), 40);
+  }
+
+  function handleClipCreated(matchId: string, clip: CreatedClip) {
+    setMatches(current => current.map(match => match.id === matchId ? { ...match, clips: [...(match.clips ?? []), clip] } : match));
+    setSelected(current => current?.id === matchId ? { ...current, clips: [...(current.clips ?? []), clip] } : current);
   }
 
   async function logout() {
@@ -171,13 +178,16 @@ export default function Home() {
         </div> : <div className="archive-empty"><Search/><b>Ingen kamper funnet</b><span>Prøv et annet søk eller filter.</span></div>}
       </section>}
 
-      {selected && <section className="featured" id="selected-match">
-        <div className="video-wrap">
-          {videoUrl ? hasBoundedClip ? <ClipPlayer src={videoUrl} clip={activeClip!} onOpenFullMatch={() => void play(selected, undefined, activeClip?.start)}/> : <video src={videoUrl} controls autoPlay playsInline controlsList="nodownload" onContextMenu={e => e.preventDefault()}/> : <button className="poster" onClick={() => void play(selected)}><span className="big-play"><Play fill="currentColor"/></span><small>SE HELE KAMPEN</small></button>}
-          <div className="score"><span>SAM</span><b>{selected.homeScore ?? "–"}<i>:</i>{selected.awayScore ?? "–"}</b><span>{selected.opponent?.slice(0,3).toUpperCase()}</span></div>
-        </div>
-        <div className="match-info"><span className="pill">{activeClip ? "Trenerklipp" : selected.competition ?? "Seriekamp"}</span><h3>{activeClip ? activeClip.title : <>Samnanger <em>mot</em><br/>{selected.opponent}</>}</h3>{activeClip ? <><p><Clock3/> {activeClip.minute || `${Math.round(activeClip.start ?? 0)}–${Math.round(activeClip.end ?? 0)} sek`}</p><p><Film/> Klippet stopper automatisk ved sluttiden</p></> : <><p><CalendarDays/> {selected.date || "Dato ikke satt"}</p><p><Users/> {selected.venue ?? "Arena ikke satt"}</p></>}<button className="primary" onClick={() => void play(selected)}><Play fill="currentColor"/> Spill av hele kampen</button></div>
-      </section>}
+      {selected && <>
+        <section className="featured" id="selected-match">
+          <div className="video-wrap">
+            {videoUrl ? hasBoundedClip ? <ClipPlayer src={videoUrl} clip={activeClip!} onOpenFullMatch={() => void play(selected, undefined, activeClip?.start)}/> : <video ref={videoRef} src={videoUrl} controls autoPlay playsInline controlsList="nodownload" onContextMenu={e => e.preventDefault()}/> : <button className="poster" onClick={() => void play(selected)}><span className="big-play"><Play fill="currentColor"/></span><small>SE HELE KAMPEN</small></button>}
+            <div className="score"><span>SAM</span><b>{selected.homeScore ?? "–"}<i>:</i>{selected.awayScore ?? "–"}</b><span>{selected.opponent?.slice(0,3).toUpperCase()}</span></div>
+          </div>
+          <div className="match-info"><span className="pill">{activeClip ? "Trenerklipp" : selected.competition ?? "Seriekamp"}</span><h3>{activeClip ? activeClip.title : <>Samnanger <em>mot</em><br/>{selected.opponent}</>}</h3>{activeClip ? <><p><Clock3/> {activeClip.minute || `${Math.round(activeClip.start ?? 0)}–${Math.round(activeClip.end ?? 0)} sek`}</p><p><Film/> Klippet stopper automatisk ved sluttiden</p></> : <><p><CalendarDays/> {selected.date || "Dato ikke satt"}</p><p><Users/> {selected.venue ?? "Arena ikke satt"}</p></>}<button className="primary" onClick={() => void play(selected)}><Play fill="currentColor"/> Spill av hele kampen</button></div>
+        </section>
+        {role === "admin" && user && videoUrl && !hasBoundedClip && <AdminClipCreator user={user} matchId={selected.id} opponent={selected.opponent} videoRef={videoRef} onCreated={handleClipCreated}/>} 
+      </>}
       <section className="section-head clips-title"><div><span>NØKKELSITUASJONER</span><h2>Klipp fra kampen</h2></div></section>
       <section className="clips">{selected?.clips?.length ? selected.clips.map((clip, index) => <button className="clip" key={clip.id} onClick={() => void play(selected, clip)}><span className={`clip-no n${index%3}`}>{String(index+1).padStart(2,"0")}</span><span className="clip-text"><small>{clip.category ?? "Analyse"} · {clip.minute ?? ""}</small><b>{clip.title}</b>{(clip.good || clip.improve) && <span className="viewer-notes">{clip.good && <span className="viewer-note good"><strong>Dette er bra</strong>{clip.good}</span>}{clip.improve && <span className="viewer-note improve"><strong>Dette bør forbedres</strong>{clip.improve}</span>}</span>}</span><span className="clip-play"><Play fill="currentColor"/></span><ChevronRight/></button>) : <p className="muted">Ingen klipp er markert i denne kampen ennå.</p>}</section>
     </>}
