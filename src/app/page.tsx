@@ -5,6 +5,7 @@ import { GoogleAuthProvider, User, onAuthStateChanged, signInWithEmailAndPasswor
 import { auth } from "@/lib/firebase-client";
 import ClipPlayer from "@/components/ClipPlayer";
 import AdminClipCreator, { type CreatedClip } from "@/components/AdminClipCreator";
+import MatchTimelineControls from "@/components/MatchTimelineControls";
 import { ArrowRight, CalendarDays, ChevronRight, CirclePlay, Clock3, Film, Goal, LockKeyhole, LogOut, MapPin, Play, Search, Settings, ShieldCheck, Sparkles, Trophy, Users, X } from "lucide-react";
 
 type Clip = { id: string; title: string; minute?: string; category?: string; start?: number; end?: number; good?: string; improve?: string };
@@ -186,6 +187,7 @@ export default function Home() {
           </div>
           <div className="match-info"><span className="pill">{activeClip ? "Trenerklipp" : selected.competition ?? "Seriekamp"}</span><h3>{activeClip ? activeClip.title : <>Samnanger <em>mot</em><br/>{selected.opponent}</>}</h3>{activeClip ? <><p><Clock3/> {activeClip.minute || `${Math.round(activeClip.start ?? 0)}–${Math.round(activeClip.end ?? 0)} sek`}</p><p><Film/> Klippet stopper automatisk ved sluttiden</p></> : <><p><CalendarDays/> {selected.date || "Dato ikke satt"}</p><p><Users/> {selected.venue ?? "Arena ikke satt"}</p></>}<button className="primary" onClick={() => void play(selected)}><Play fill="currentColor"/> Spill av hele kampen</button></div>
         </section>
+        {videoUrl && !hasBoundedClip && <MatchTimelineControls key={selected.id} videoRef={videoRef} clips={selected.clips ?? []} onOpenClip={(clip) => void play(selected, clip)}/>} 
         {role === "admin" && user && videoUrl && !hasBoundedClip && <AdminClipCreator user={user} matchId={selected.id} opponent={selected.opponent} videoRef={videoRef} onCreated={handleClipCreated}/>} 
       </>}
       <section className="section-head clips-title"><div><span>NØKKELSITUASJONER</span><h2>Klipp fra kampen</h2></div></section>
