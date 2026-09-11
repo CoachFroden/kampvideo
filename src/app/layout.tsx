@@ -7,6 +7,8 @@ import "./admin.css";
 import "./admin-upload.css";
 import "./admin-mobile.css";
 import "./admin-date-ios.css";
+import "./auth-links.css";
+import GlobalQuickLinks from "@/components/GlobalQuickLinks";
 
 export const metadata: Metadata = {
   title: {
@@ -33,5 +35,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="no"><body>{children}</body></html>;
+  return <html lang="no"><body>{children}<GlobalQuickLinks/></body></html>;
 }
