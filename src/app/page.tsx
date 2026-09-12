@@ -175,7 +175,7 @@ export default function Home() {
         </div>
 
         {filteredMatches.length ? <div className="archive-grid">
-          {filteredMatches.map((match, index) => {
+          {filteredMatches.map((match) => {
             const result = resultOf(match);
             const latest = match.id === matches[0]?.id;
             const selectedMatch = match.id === selected?.id;
@@ -199,9 +199,9 @@ export default function Home() {
             {videoUrl ? hasBoundedClip ? <ClipPlayer src={videoUrl} clip={activeClip!} onOpenFullMatch={() => void play(selected, undefined, resumeTime)}/> : <video ref={videoRef} src={videoUrl} controls autoPlay playsInline controlsList="nodownload" onContextMenu={e => e.preventDefault()} onLoadedMetadata={e => { const duration = e.currentTarget.duration; if (Number.isFinite(duration) && duration > 0) setMatchDuration(duration); }}/> : <button className="poster" onClick={() => void play(selected)}><span className="big-play"><Play fill="currentColor"/></span><small>SE HELE KAMPEN</small></button>}
             <div className="score"><span>SAM</span><b>{selected.homeScore ?? "–"}<i>:</i>{selected.awayScore ?? "–"}</b><span>{selected.opponent?.slice(0,3).toUpperCase()}</span></div>
           </div>
+          {videoUrl && <div className="match-timeline-slot"><MatchTimelineControls key={`${selected.id}-${hasBoundedClip ? "clip" : "match"}`} videoRef={hasBoundedClip ? undefined : videoRef} clips={selected.clips ?? []} durationOverride={matchDuration} currentOverride={hasBoundedClip ? activeClip?.start : undefined} activeClipId={activeClip?.id ?? null} onOpenClip={(clip) => void play(selected, clip)}/></div>}
           <div className="match-info"><span className="pill">{activeClip ? "Trenerklipp" : selected.competition ?? "Seriekamp"}</span><h3>{activeClip ? activeClip.title : <>Samnanger <em>mot</em><br/>{selected.opponent}</>}</h3>{activeClip ? <><p><Clock3/> {activeClip.minute || `${Math.round(activeClip.start ?? 0)}–${Math.round(activeClip.end ?? 0)} sek`}</p><p><Film/> Klippet stopper automatisk ved sluttiden</p></> : <><p><CalendarDays/> {selected.date || "Dato ikke satt"}</p><p><Users/> {selected.venue ?? "Arena ikke satt"}</p></>}<button className="primary" onClick={() => void play(selected, undefined, activeClip ? resumeTime : undefined)}><Play fill="currentColor"/> Spill av hele kampen</button></div>
         </section>
-        {videoUrl && <MatchTimelineControls key={`${selected.id}-${hasBoundedClip ? "clip" : "match"}`} videoRef={hasBoundedClip ? undefined : videoRef} clips={selected.clips ?? []} durationOverride={matchDuration} currentOverride={hasBoundedClip ? activeClip?.start : undefined} activeClipId={activeClip?.id ?? null} onOpenClip={(clip) => void play(selected, clip)}/>} 
         {role === "admin" && user && videoUrl && !hasBoundedClip && <AdminClipCreator user={user} matchId={selected.id} opponent={selected.opponent} videoRef={videoRef} onCreated={handleClipCreated}/>} 
       </>}
       <section className="section-head clips-title"><div><span>NØKKELSITUASJONER</span><h2>Klipp fra kampen</h2></div></section>
